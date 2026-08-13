@@ -1,0 +1,53 @@
+@media (max-width: 1050px) {
+  .app-shell { grid-template-columns: 218px minmax(0, 1fr); }
+  .metrics-grid { grid-template-columns: repeat(2, 1fr); }
+  .metrics-grid article:nth-child(2) { border-right: 0; }
+  .metrics-grid article:nth-child(-n+2) { border-bottom: 1px solid var(--line); }
+  .cloud-grid { grid-template-columns: 1fr; }
+  .ngram-layout { grid-template-columns: 1fr; }
+  .insight-panel { min-height: 200px; }
+  .documents-list article { grid-template-columns: 35px minmax(160px, 1fr) 70px 120px 70px; }
+}
+@media (max-width: 760px) {
+  .app-shell { display: block; }
+  .sidebar { position: fixed; left: -270px; width: 252px; transition: left .25s ease; box-shadow: 20px 0 50px #0005; }
+  .sidebar.is-open { left: 0; }
+  .menu-button { display: block; }
+  .topbar { height: 64px; padding: 0 18px; gap: 12px; }
+  .query-lockup { margin-right: auto; }
+  .updated { display: none; }
+  .topbar .button { min-height: 36px; padding: 0 10px; }
+  .content { width: calc(100% - 28px); padding-top: 34px; }
+  .hero-section { display: grid; }
+  .score-card { width: 100%; flex-basis: auto; }
+  h1 { font-size: 42px; }
+  .metrics-grid { grid-template-columns: 1fr 1fr; }
+  .metrics-grid article { padding: 16px; }
+  .metrics-grid strong { font-size: 24px; }
+  .priority-card { grid-template-columns: auto 1fr; }
+  .priority-card .button { grid-column: 1/3; width: 100%; }
+  .card-section { padding: 20px 14px; border-radius: 14px; }
+  .section-head { display: grid; }
+  .section-head .button { width: 100%; }
+  .table-toolbar { align-items: stretch; flex-direction: column; }
+  .segmented { justify-content: space-between; }
+  .search { width: 100%; height: 40px; }
+  .word-cloud { padding-left: 4px; padding-right: 4px; }
+  .chart-head { display: grid; }
+  .bar-row { grid-template-columns: 85px 1fr 56px; }
+  .documents-list article { grid-template-columns: 32px minmax(0, 1fr) 64px; gap: 9px; }
+  .doc-score { grid-column: 2/3; }
+  .relevance { grid-column: 3/4; grid-row: 1/3; }
+  .volume-summary { grid-template-columns: 1fr; }
+  .volume-summary > div { border-right: 0; border-bottom: 1px solid var(--line); }
+  .volume-summary > div:last-child { border-bottom: 0; }
+  .report-footer { align-items: flex-start; gap: 14px; }
+  .report-footer > div { align-items: flex-start; flex-direction: column; }
+}
+@media print {
+  .sidebar, .topbar, .button, .table-toolbar { display: none !important; }
+  .app-shell { display: block; }
+  .content { width: 100%; padding: 0; }
+  .card-section, .priority-card { break-inside: avoid; box-shadow: none; }
+  body { background: #fff; }
+}
