@@ -6,7 +6,7 @@ const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
 
 function trustedSiteOrigin(): URL {
-  const fallback = new URL("http://localhost:3001");
+  const fallback = new URL("http://localhost:3000");
   const configured = process.env.SITE_URL?.trim();
   if (!configured) return fallback;
 

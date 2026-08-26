@@ -18,6 +18,8 @@
 
 ### Changed
 
+- пользовательская установка, production-настройка и правила для AI-агентов
+  объединены в один канонический README без дублирующей инструкции;
 - обновлены React/RSC, Vinext, Vite, Cloudflare plugin и Wrangler;
 - XMLRiver credentials перенесены из постоянного browser storage в данные
   текущей вкладки;
