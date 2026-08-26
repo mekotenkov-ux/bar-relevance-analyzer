@@ -42,7 +42,7 @@
 .insight-panel > div b { color: var(--accent); font-size: 24px; }
 .insight-panel > div small { grid-column: 1/3; font-size: 9px; color: #777d72; }
 .documents-list { display: grid; border-top: 1px solid var(--line); }
-.documents-list article { display: grid; grid-template-columns: 44px minmax(180px, 1fr) 90px minmax(150px, .8fr) 90px; gap: 14px; align-items: center; padding: 14px 10px; border-bottom: 1px solid var(--line); }
+.documents-list article { display: grid; grid-template-columns: 44px minmax(180px, 1fr) 70px minmax(390px, 1.5fr); gap: 14px; align-items: center; padding: 14px 10px; border-bottom: 1px solid var(--line); }
 .documents-list article.our-document { background: #f1ffd0; margin: 7px -8px 0; padding-left: 18px; padding-right: 18px; border: 1px solid #c8e568; border-radius: 10px; }
 .rank { color: #93998e; font: 12px var(--font-geist-mono); }
 .doc-main { min-width: 0; display: grid; gap: 3px; }
@@ -51,13 +51,14 @@
 .doc-main em, .inline-label { font-style: normal; font-size: 8px; text-transform: uppercase; padding: 3px 5px; border-radius: 4px; background: var(--ink); color: var(--accent); }
 .doc-main > span { color: var(--muted); font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .doc-position { display: grid; gap: 2px; }
-.doc-position span, .doc-score > span, .relevance span { font-size: 9px; color: var(--muted); }
+.doc-position span { font-size: 9px; color: var(--muted); }
 .doc-position b { font-size: 13px; }
-.doc-score { display: grid; gap: 7px; }
-.doc-score > div { height: 4px; background: #e5e6df; border-radius: 99px; overflow: hidden; }
-.doc-score i { display: block; height: 100%; background: var(--purple); }
-.relevance { text-align: right; display: grid; }
-.relevance b { font-size: 20px; }
+.document-metrics { min-width: 0; display: grid; grid-template-columns: repeat(4, minmax(78px, 1fr)); border-left: 1px solid var(--line); }
+.document-metrics > div { min-width: 0; padding: 3px 10px; display: grid; gap: 3px; border-right: 1px solid var(--line); }
+.document-metrics > div:last-child { border-right: 0; }
+.document-metrics span { color: var(--muted); font-size: 8px; line-height: 1.25; text-transform: uppercase; letter-spacing: .045em; }
+.document-metrics b { font-size: 15px; line-height: 1.1; }
+.document-metrics small { overflow: hidden; color: #8b9186; font-size: 8px; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
 .volume-summary { display: grid; grid-template-columns: repeat(3, 1fr); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; margin-bottom: 14px; }
 .volume-summary > div { padding: 18px; display: grid; gap: 5px; border-right: 1px solid var(--line); }
 .volume-summary > div:last-child { border-right: 0; }

@@ -1,0 +1,19 @@
+cff-version: 1.2.0
+message: "If you use БАР in research or education, please cite the project and its author."
+title: "БАР — бесплатный анализ релевантности"
+type: software
+authors:
+  - family-names: "Котенков"
+    given-names: "Максим"
+    affiliation: "SEO Мясо"
+version: 0.1.0
+date-released: 2026-08-26
+license: MIT
+url: "https://seomeat.ru/"
+repository-code: "https://github.com/mekotenkov-ux/bar-relevance-analyzer"
+keywords:
+  - SEO
+  - semantic analysis
+  - TF-IDF
+  - NLP
+  - relevance analysis

@@ -1,0 +1,81 @@
+name: Сообщить об ошибке
+description: Воспроизводимая ошибка или регрессия в БАР
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Спасибо за отчёт. Не публикуйте API-ключи, `.env`, персональные данные и полный текст чужих страниц. Уязвимости отправляйте по SECURITY.md.
+  - type: input
+    id: version
+    attributes:
+      label: Версия или commit
+      description: Tag, commit SHA или дата checkout.
+      placeholder: main @ abc1234
+    validations:
+      required: true
+  - type: dropdown
+    id: component
+    attributes:
+      label: Компонент
+      options:
+        - Поиск конкурентов / XMLRiver
+        - Загрузка страниц / Firecrawl
+        - Леммы и N-граммы
+        - Зональный анализ и облака
+        - Семантические связи / spaCy
+        - Интерфейс и экспорт
+        - Сборка и self-hosting
+        - Другое
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Окружение
+      description: ОС, версия Node.js, браузер, local/production и способ развёртывания.
+      placeholder: Windows 11, Node 22.14, Chromium, npm run dev
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Шаги воспроизведения
+      description: Используйте обезличенный минимальный пример.
+      placeholder: |
+        1. Открыть …
+        2. Ввести …
+        3. Нажать …
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Ожидаемый результат
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Фактический результат
+      description: Добавьте безопасный короткий лог или HTTP status, если он есть.
+    validations:
+      required: true
+  - type: textarea
+    id: extra
+    attributes:
+      label: Дополнительный контекст
+      description: Скриншоты без credentials, частота воспроизведения, возможная причина.
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Проверки перед отправкой
+      options:
+        - label: Я проверил существующие issues и не нашёл дубликат.
+          required: true
+        - label: В отчёте нет credentials, персональных данных и закрытого содержимого.
+          required: true
+        - label: Это не приватный отчёт об уязвимости.
+          required: true

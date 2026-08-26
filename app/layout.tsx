@@ -1,28 +1,39 @@
 import type { Metadata } from "next";
-import { headers } from "next/headers";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
 
+function trustedSiteOrigin(): URL {
+  const fallback = new URL("http://localhost:3001");
+  const configured = process.env.SITE_URL?.trim();
+  if (!configured) return fallback;
+
+  try {
+    const url = new URL(configured);
+    if ((url.protocol !== "http:" && url.protocol !== "https:") || url.username || url.password) return fallback;
+    return new URL(url.origin);
+  } catch {
+    return fallback;
+  }
+}
+
 export async function generateMetadata(): Promise<Metadata> {
-  const requestHeaders = await headers();
-  const host = requestHeaders.get("host") || "localhost:3001";
-  const protocol = host.includes("localhost") ? "http" : "https";
-  const imageUrl = protocol + "://" + host + "/og.png";
+  const metadataBase = trustedSiteOrigin();
   return {
-    title: "Copykiller Semantic — отчёт релевантности",
-    description: "Семантический анализ страницы в сравнении с конкурентами: леммы, N‑граммы, тематический профиль и рекомендации.",
+    metadataBase,
+    title: "БАР — бесплатный анализ релевантности",
+    description: "Бесплатный анализ релевантности страницы в сравнении с поисковыми конкурентами: леммы, N‑граммы, тематический профиль и рекомендации.",
     icons: { icon: "/favicon.svg", shortcut: "/favicon.svg" },
     openGraph: {
-      title: "Copykiller Semantic",
-      description: "Отчёт по релевантности страницы",
+      title: "БАР — бесплатный анализ релевантности",
+      description: "Сравнение страницы с поисковыми конкурентами",
       type: "website",
       locale: "ru_RU",
-      images: [{ url: imageUrl, width: 1748, height: 915, alt: "Copykiller Semantic — отчёт по релевантности страницы" }],
+      images: [{ url: "/og.png", width: 1731, height: 909, alt: "БАР — бесплатный анализ релевантности страницы" }],
     },
-    twitter: { card: "summary_large_image", title: "Copykiller Semantic", description: "Отчёт по релевантности страницы", images: [imageUrl] },
+    twitter: { card: "summary_large_image", title: "БАР — бесплатный анализ релевантности", description: "Сравнение страницы с поисковыми конкурентами", images: ["/og.png"] },
   };
 }
 

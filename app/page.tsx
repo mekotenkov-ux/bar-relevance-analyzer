@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import Image from "next/image";
 import { cloudWords, documents, lemmas, navItems, ngrams, oursCloud, wordCounts } from "./data";
 
 function DownloadButton({ label, rows }: { label: string; rows: Record<string, unknown>[] }) {
@@ -35,7 +36,7 @@ export default function Home() {
   const [active, setActive] = useState("overview");
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("Все");
-  const [sort, setSort] = useState<"score" | "coverage">("score");
+  const [sort, setSort] = useState<"importance" | "documentShare">("importance");
   const [menuOpen, setMenuOpen] = useState(false);
 
   const filteredLemmas = useMemo(() => {
@@ -55,8 +56,8 @@ export default function Home() {
     <main className="app-shell">
       <aside className={"sidebar " + (menuOpen ? "is-open" : "")}>
         <div className="brand-lockup">
-          <img src="/seomeat-logo.svg" alt="SEO Meat" />
-          <span>Copykiller <b>Semantic</b></span>
+          <Image src="/seomeat-logo.svg" alt="SEO Meat" width={152} height={16} priority />
+          <span><b>БАР</b> — бесплатный анализ релевантности</span>
         </div>
         <div className="project-card">
           <span className="project-label">Проект</span>
@@ -93,20 +94,22 @@ export default function Home() {
           <section id="overview" className="hero-section report-section">
             <div className="hero-copy">
               <span className="eyebrow">Семантический анализ · Google · Москва</span>
-              <h1>Отчёт по релевантности страницы</h1>
+              <h1>Отчёт по метрикам страницы</h1>
               <p>Сравнили вашу страницу с 13 конкурентами из выдачи и нашли точки роста без механического переспама.</p>
             </div>
-            <div className="score-card">
-              <div className="score-ring"><span>68</span><small>/ 100</small></div>
-              <div><b>Есть потенциал</b><span>+19 пунктов после правок</span></div>
+            <div className="metric-note-card">
+              <div className="metric-count"><span>3</span><small>метрики</small></div>
+              <div><b>Без единого балла</b><span>Каждый показатель можно проверить отдельно</span></div>
             </div>
           </section>
 
-          <section className="metrics-grid" aria-label="Ключевые показатели">
-            <article><span>Охват лемм</span><strong>64%</strong><em>−18 п.п. к медиане</em></article>
-            <article><span>Объём текста</span><strong>1 126</strong><em>слов · нужно ≈ 1 650</em></article>
-            <article><span>N-граммы</span><strong>23 / 41</strong><em>18 фраз не раскрыто</em></article>
-            <article><span>Переспам</span><strong>2</strong><em className="good">критичных риска</em></article>
+          <section className="metrics-summary" aria-label="Ключевые показатели">
+            <div className="metrics-grid">
+              <article><span>TF-IDF ключей</span><strong>68%</strong><em>сырой вес 2,04</em></article>
+              <article><span>Взвешенный охват</span><strong>64%</strong><em>важные термины и фразы</em></article>
+              <article><span>Взвешенная плотность</span><strong>58%</strong><em>выполнение ориентиров по вхождениям</em></article>
+            </div>
+            <article className="volume-metric-card"><span>Объём текста</span><strong>1 126</strong><em>слов · нужно ≈ 1 650</em></article>
           </section>
 
           <section className="priority-card">
@@ -116,7 +119,7 @@ export default function Home() {
           </section>
 
           <section id="lemmas" className="report-section card-section">
-            <SectionHeader eyebrow="01 · Лексика" title="Таблица лемм" note="Слова приведены к начальной форме. Приоритет учитывает частоту у конкурентов, покрытие и разрыв с вашей страницей." rows={lemmas as unknown as Record<string, unknown>[]} />
+            <SectionHeader eyebrow="01 · Лексика" title="Таблица лемм" note="Слова приведены к начальной форме. Важность рассчитывается на основе TF-IDF и других сигналов релевантности." rows={lemmas as unknown as Record<string, unknown>[]} />
             <div className="table-toolbar">
               <div className="segmented">
                 {["Все", "Дефицит", "Избыток"].map((item) => <button key={item} className={filter === item ? "active" : ""} onClick={() => setFilter(item)}>{item}</button>)}
@@ -125,8 +128,8 @@ export default function Home() {
             </div>
             <div className="table-wrap">
               <table>
-                <thead><tr><th>Лемма</th><th>Сайтов</th><th>У нас</th><th>Медиана</th><th><button onClick={() => setSort("coverage")}>Покрытие ↕</button></th><th><button onClick={() => setSort("score")}>Приоритет ↕</button></th><th>Рекомендация</th></tr></thead>
-                <tbody>{filteredLemmas.map((row) => <tr key={row.lemma}><td><b>{row.lemma}</b></td><td>{row.competitors} / 13</td><td>{row.ours}</td><td>{row.median}</td><td><div className="coverage-cell"><span><i style={{ width: row.coverage + "%" }} /></span>{row.coverage}%</div></td><td><strong>{row.score.toFixed(1)}</strong></td><td><span className={"status status-" + row.status.toLowerCase()}>{row.status}</span></td></tr>)}</tbody>
+                <thead><tr><th>Лемма</th><th>Сайтов</th><th>У нас</th><th>Медиана</th><th><button onClick={() => setSort("documentShare")}>Доля документов ↕</button></th><th><button onClick={() => setSort("importance")}>Важность ↕</button></th><th>Рекомендация</th></tr></thead>
+                <tbody>{filteredLemmas.map((row) => <tr key={row.lemma}><td><b>{row.lemma}</b></td><td>{row.competitors} / 13</td><td>{row.ours}</td><td>{row.median}</td><td><div className="document-share-cell"><span><i style={{ width: row.documentShare + "%" }} /></span>{row.documentShare}%</div></td><td><strong>{row.importance.toFixed(1)}</strong></td><td><span className={"status status-" + row.status.toLowerCase()}>{row.status}</span></td></tr>)}</tbody>
               </table>
             </div>
             <div className="table-caption">Показано {filteredLemmas.length} из {lemmas.length} лемм</div>
@@ -149,16 +152,16 @@ export default function Home() {
           </section>
 
           <section id="ngrams" className="report-section card-section">
-            <SectionHeader eyebrow="03 · Словосочетания" title="N‑граммы" note="Устойчивые фразы из двух и трёх слов, которые регулярно встречаются у релевантных документов." rows={ngrams as unknown as Record<string, unknown>[]} />
+            <SectionHeader eyebrow="03 · Словосочетания" title="N‑граммы" note="Устойчивые фразы из двух и трёх слов, которые регулярно встречаются в документах поисковой выдачи." rows={ngrams as unknown as Record<string, unknown>[]} />
             <div className="ngram-layout">
-              <div className="table-wrap"><table><thead><tr><th>N‑грамма</th><th>Сайтов</th><th>Медиана</th><th>У нас</th><th>Вес</th><th>Действие</th></tr></thead><tbody>{ngrams.map((row) => <tr key={row.phrase}><td><b>{row.phrase}</b></td><td>{row.sites} / 13</td><td>{row.median}</td><td>{row.ours}</td><td><strong>{row.score}</strong></td><td><span className={row.status === "Норма" ? "status status-норма" : row.status.startsWith("Снизить") ? "status status-снизить" : "status status-добавить"}>{row.status}</span></td></tr>)}</tbody></table></div>
-              <aside className="insight-panel"><span className="eyebrow">Быстрая победа</span><strong>«разговорный английский»</strong><p>Фраза есть у 9 из 13 конкурентов и полностью отсутствует на вашей странице.</p><div><span>Потенциал</span><b>+4.2</b><small>к релевантности</small></div></aside>
+              <div className="table-wrap"><table><thead><tr><th>N‑грамма</th><th>Сайтов</th><th>Медиана</th><th>У нас</th><th>Важность</th><th>Действие</th></tr></thead><tbody>{ngrams.map((row) => <tr key={row.phrase}><td><b>{row.phrase}</b></td><td>{row.sites} / 13</td><td>{row.median}</td><td>{row.ours}</td><td><strong>{row.importance}</strong></td><td><span className={row.status === "Норма" ? "status status-норма" : row.status.startsWith("Снизить") ? "status status-снизить" : "status status-добавить"}>{row.status}</span></td></tr>)}</tbody></table></div>
+              <aside className="insight-panel"><span className="eyebrow">Быстрая победа</span><strong>«разговорный английский»</strong><p>Фраза есть у 9 из 13 конкурентов и полностью отсутствует на вашей странице.</p><div><span>Дефицит</span><b>3</b><small>рекомендуемых вхождения</small></div></aside>
             </div>
           </section>
 
           <section id="documents" className="report-section card-section">
-            <SectionHeader eyebrow="04 · Выдача" title="ТОП релевантных документов" note="Сводный рейтинг учитывает тематическое покрытие, распределение лексики и близость структуры документа к медиане ТОПа." rows={documents as unknown as Record<string, unknown>[]} />
-            <div className="documents-list">{documents.map((doc, index) => <article key={doc.domain} className={doc.ours ? "our-document" : ""}><span className="rank">{String(index + 1).padStart(2, "0")}</span><div className="doc-main"><div><strong>{doc.domain}</strong>{doc.ours && <em>Наша страница</em>}</div><span>{doc.url}</span></div><div className="doc-position"><span>Позиция</span><b>{doc.position || "—"}</b></div><div className="doc-score"><span>Покрытие {doc.coverage}%</span><div><i style={{ width: doc.coverage + "%" }} /></div></div><div className="relevance"><b>{doc.relevance}</b><span>релевантность</span></div></article>)}</div>
+            <SectionHeader eyebrow="04 · Выдача" title="Сравнение документов по метрикам" note="Документы отсортированы по TF-IDF входных ключей. Взвешенная плотность показывает выполнение ориентиров по вхождениям важных лемм и фраз." rows={documents as unknown as Record<string, unknown>[]} />
+            <div className="documents-list">{documents.map((doc, index) => <article key={doc.domain} className={doc.ours ? "our-document" : ""}><span className="rank">{String(index + 1).padStart(2, "0")}</span><div className="doc-main"><div><strong>{doc.domain}</strong>{doc.ours && <em>Наша страница</em>}</div><span>{doc.url}</span></div><div className="doc-position"><span>Позиция</span><b>{doc.position || "—"}</b></div><div className="document-metrics"><div><span>TF-IDF ключей</span><b>{doc.keyTfidfScore}%</b><small>вес {doc.keyTfidfRaw.toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</small></div><div><span>Взвешенный охват</span><b>{doc.weightedCoverage}%</b><small>важных тем</small></div><div><span>Взвешенная плотность</span><b>{doc.weightedDensity}%</b><small>выполнение ориентиров</small></div><div><span>Слов</span><b>{doc.words.toLocaleString("ru-RU")}</b><small>видимый текст</small></div></div></article>)}</div>
           </section>
 
           <section id="volume" className="report-section card-section">
@@ -171,7 +174,7 @@ export default function Home() {
             <div className="table-wrap"><table><thead><tr><th>Документ</th><th>Всего слов</th><th>Полезный текст</th><th>Заголовки</th><th>Предложения</th><th>От медианы</th></tr></thead><tbody>{wordCounts.map((row) => <tr key={row.domain} className={row.ours ? "highlight-row" : ""}><td><b>{row.domain}</b>{row.ours && <small className="inline-label">наш</small>}</td><td>{row.words.toLocaleString("ru-RU")}</td><td>{row.useful.toLocaleString("ru-RU")}</td><td>{row.headings}</td><td>{row.sentences}</td><td><span className={row.words < 1500 ? "negative" : "positive"}>{row.words - 1834 > 0 ? "+" : ""}{(row.words - 1834).toLocaleString("ru-RU")}</span></td></tr>)}</tbody></table></div>
           </section>
 
-          <footer className="report-footer"><div><img src="/seomeat-logo.svg" alt="SEO Meat" /><span>Copykiller Semantic · отчёт сформирован 13 августа 2026</span></div><a href="https://seomeat.ru/" target="_blank" rel="noreferrer">Сделано в школе SEO Мясо ↗</a></footer>
+          <footer className="report-footer"><div><Image src="/seomeat-logo.svg" alt="SEO Meat" width={152} height={16} /><span>БАР · бесплатный анализ релевантности</span></div><a href="https://seomeat.ru/" target="_blank" rel="noreferrer">Сделано в школе SEO Мясо ↗</a></footer>
         </div>
       </section>
     </main>

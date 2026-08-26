@@ -3,24 +3,24 @@ export type Lemma = {
   competitors: number;
   ours: number;
   median: number;
-  coverage: number;
-  score: number;
+  documentShare: number;
+  importance: number;
   status: "Добавить" | "Норма" | "Снизить";
 };
 
 export const lemmas: Lemma[] = [
-  { lemma: "английский", competitors: 13, ours: 7, median: 12, coverage: 100, score: 9.8, status: "Добавить" },
-  { lemma: "курс", competitors: 12, ours: 9, median: 10, coverage: 92, score: 8.9, status: "Добавить" },
-  { lemma: "язык", competitors: 13, ours: 12, median: 11, coverage: 100, score: 8.6, status: "Норма" },
-  { lemma: "занятие", competitors: 11, ours: 4, median: 8, coverage: 85, score: 7.7, status: "Добавить" },
-  { lemma: "обучение", competitors: 12, ours: 6, median: 7, coverage: 92, score: 7.1, status: "Добавить" },
-  { lemma: "преподаватель", competitors: 10, ours: 3, median: 5, coverage: 77, score: 6.5, status: "Добавить" },
-  { lemma: "онлайн", competitors: 11, ours: 8, median: 7, coverage: 85, score: 6.2, status: "Норма" },
-  { lemma: "урок", competitors: 10, ours: 11, median: 6, coverage: 77, score: 5.8, status: "Снизить" },
-  { lemma: "разговорный", competitors: 9, ours: 2, median: 4, coverage: 69, score: 5.4, status: "Добавить" },
-  { lemma: "уровень", competitors: 9, ours: 5, median: 5, coverage: 69, score: 5.1, status: "Норма" },
-  { lemma: "программа", competitors: 8, ours: 7, median: 4, coverage: 62, score: 4.7, status: "Снизить" },
-  { lemma: "практика", competitors: 8, ours: 3, median: 4, coverage: 62, score: 4.5, status: "Добавить" },
+  { lemma: "английский", competitors: 13, ours: 7, median: 12, documentShare: 100, importance: 9.8, status: "Добавить" },
+  { lemma: "курс", competitors: 12, ours: 9, median: 10, documentShare: 92, importance: 8.9, status: "Добавить" },
+  { lemma: "язык", competitors: 13, ours: 12, median: 11, documentShare: 100, importance: 8.6, status: "Норма" },
+  { lemma: "занятие", competitors: 11, ours: 4, median: 8, documentShare: 85, importance: 7.7, status: "Добавить" },
+  { lemma: "обучение", competitors: 12, ours: 6, median: 7, documentShare: 92, importance: 7.1, status: "Добавить" },
+  { lemma: "преподаватель", competitors: 10, ours: 3, median: 5, documentShare: 77, importance: 6.5, status: "Добавить" },
+  { lemma: "онлайн", competitors: 11, ours: 8, median: 7, documentShare: 85, importance: 6.2, status: "Норма" },
+  { lemma: "урок", competitors: 10, ours: 11, median: 6, documentShare: 77, importance: 5.8, status: "Снизить" },
+  { lemma: "разговорный", competitors: 9, ours: 2, median: 4, documentShare: 69, importance: 5.4, status: "Добавить" },
+  { lemma: "уровень", competitors: 9, ours: 5, median: 5, documentShare: 69, importance: 5.1, status: "Норма" },
+  { lemma: "программа", competitors: 8, ours: 7, median: 4, documentShare: 62, importance: 4.7, status: "Снизить" },
+  { lemma: "практика", competitors: 8, ours: 3, median: 4, documentShare: 62, importance: 4.5, status: "Добавить" },
 ];
 
 export const cloudWords: [string, number][] = [
@@ -36,21 +36,21 @@ export const oursCloud: [string, number][] = [
 ];
 
 export const ngrams = [
-  { phrase: "курсы английского языка", sites: 11, median: 4, ours: 2, score: 9.4, status: "Добавить 2" },
-  { phrase: "английский язык онлайн", sites: 10, median: 3, ours: 1, score: 8.8, status: "Добавить 2" },
-  { phrase: "разговорный английский", sites: 9, median: 3, ours: 0, score: 8.2, status: "Добавить 3" },
-  { phrase: "индивидуальные занятия", sites: 8, median: 2, ours: 1, score: 7.6, status: "Добавить 1" },
-  { phrase: "онлайн школа английского", sites: 8, median: 2, ours: 2, score: 7.1, status: "Норма" },
-  { phrase: "пробный урок", sites: 7, median: 2, ours: 3, score: 6.4, status: "Снизить 1" },
+  { phrase: "курсы английского языка", sites: 11, median: 4, ours: 2, importance: 9.4, status: "Добавить 2" },
+  { phrase: "английский язык онлайн", sites: 10, median: 3, ours: 1, importance: 8.8, status: "Добавить 2" },
+  { phrase: "разговорный английский", sites: 9, median: 3, ours: 0, importance: 8.2, status: "Добавить 3" },
+  { phrase: "индивидуальные занятия", sites: 8, median: 2, ours: 1, importance: 7.6, status: "Добавить 1" },
+  { phrase: "онлайн школа английского", sites: 8, median: 2, ours: 2, importance: 7.1, status: "Норма" },
+  { phrase: "пробный урок", sites: 7, median: 2, ours: 3, importance: 6.4, status: "Снизить 1" },
 ];
 
 export const documents = [
-  { position: 1, domain: "englex.ru", url: "/online-courses/", relevance: 94, coverage: 91, words: 1834 },
-  { position: 3, domain: "skyeng.ru", url: "/english-online/", relevance: 91, coverage: 88, words: 2140 },
-  { position: 5, domain: "bkc.ru", url: "/courses/english/", relevance: 87, coverage: 84, words: 1568 },
-  { position: 2, domain: "englishdom.com", url: "/online/", relevance: 84, coverage: 81, words: 1960 },
-  { position: 7, domain: "tetrika-school.ru", url: "/english/", relevance: 79, coverage: 77, words: 1428 },
-  { position: 0, domain: "my-site.ru", url: "/english-course/", relevance: 68, coverage: 64, words: 1126, ours: true },
+  { position: 1, domain: "englex.ru", url: "/online-courses/", keyTfidfScore: 94, keyTfidfRaw: 2.84, weightedCoverage: 91, weightedDensity: 86, words: 1834 },
+  { position: 3, domain: "skyeng.ru", url: "/english-online/", keyTfidfScore: 91, keyTfidfRaw: 2.73, weightedCoverage: 88, weightedDensity: 83, words: 2140 },
+  { position: 5, domain: "bkc.ru", url: "/courses/english/", keyTfidfScore: 87, keyTfidfRaw: 2.61, weightedCoverage: 84, weightedDensity: 78, words: 1568 },
+  { position: 2, domain: "englishdom.com", url: "/online/", keyTfidfScore: 84, keyTfidfRaw: 2.52, weightedCoverage: 81, weightedDensity: 75, words: 1960 },
+  { position: 7, domain: "tetrika-school.ru", url: "/english/", keyTfidfScore: 79, keyTfidfRaw: 2.37, weightedCoverage: 77, weightedDensity: 71, words: 1428 },
+  { position: 0, domain: "my-site.ru", url: "/english-course/", keyTfidfScore: 68, keyTfidfRaw: 2.04, weightedCoverage: 64, weightedDensity: 58, words: 1126, ours: true },
 ];
 
 export const wordCounts = [

@@ -1,0 +1,54 @@
+{
+  "language": "ru",
+  "min_support": 2,
+  "entities": [
+    { "id": "e-seo-courses", "key": "seo курс", "label": "SEO-курсы", "kind": "ngram", "importance": 94, "forms": ["курсы SEO", "SEO курсы", "SEO-курсы"] },
+    { "id": "e-site-visibility", "key": "видим сайт", "label": "видимость сайта", "kind": "ngram", "importance": 82, "forms": ["видимость сайта", "видимость сайтов"] },
+    { "id": "e-organic-traffic", "key": "органическ трафик", "label": "органический трафик", "kind": "ngram", "importance": 79, "forms": ["органический трафик", "органического трафика"] },
+    { "id": "e-search-promotion", "key": "поисков продвижен", "label": "поисковое продвижение", "kind": "ngram", "importance": 76, "forms": ["поисковое продвижение", "поискового продвижения"] },
+    { "id": "e-clients", "key": "клиент", "label": "клиенты", "kind": "lemma", "importance": 71, "forms": ["клиент", "клиенты", "клиентов"] },
+    { "id": "e-academy", "key": "академ", "label": "академия", "kind": "lemma", "importance": 48, "forms": ["академия", "академии"] },
+    { "id": "e-month", "key": "месяц", "label": "месяц", "kind": "lemma", "importance": 31, "forms": ["месяц", "месяца", "месяцев"] }
+  ],
+  "documents": [
+    {
+      "id": "ours",
+      "name": "Наша страница",
+      "url": "https://seomeat.ru/",
+      "ours": true,
+      "sentences": [
+        { "id": "ours-1", "text": "SEO-курсы повышают видимость сайта." },
+        { "id": "ours-2", "text": "Практические курсы SEO увеличивают органический трафик." },
+        { "id": "ours-3", "text": "Поисковое продвижение привлекает клиентов." },
+        { "id": "ours-4", "text": "Обучение длится один месяц." }
+      ]
+    },
+    {
+      "id": "competitor-1",
+      "name": "Конкурент 1",
+      "url": "https://example-one.test/seo",
+      "ours": false,
+      "sentences": [
+        { "id": "c1-1", "text": "Хорошие SEO курсы повышают видимость сайта." },
+        { "id": "c1-2", "text": "Курсы SEO увеличивают органический трафик." },
+        { "id": "c1-3", "text": "Грамотное поисковое продвижение привлекает клиентов." },
+        { "id": "c1-4", "text": "Академия выдает диплом после обучения." }
+      ]
+    },
+    {
+      "id": "competitor-2",
+      "name": "Конкурент 2",
+      "url": "https://example-two.test/seo",
+      "ours": false,
+      "sentences": [
+        { "id": "c2-1", "text": "SEO-курсы могут повысить видимость сайта." },
+        { "id": "c2-2", "text": "Академия обещает результат за месяц." }
+      ]
+    }
+  ],
+  "expected_relations": [
+    { "source_id": "e-seo-courses", "predicate": "повышать", "target_id": "e-site-visibility", "min_support": 2 },
+    { "source_id": "e-seo-courses", "predicate": "увеличивать", "target_id": "e-organic-traffic", "min_support": 2 },
+    { "source_id": "e-search-promotion", "predicate": "привлекать", "target_id": "e-clients", "min_support": 2 }
+  ]
+}

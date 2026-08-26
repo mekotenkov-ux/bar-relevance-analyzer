@@ -1,0 +1,7 @@
+FROM qwen3:1.7b
+
+# BAR sends a bounded evidence packet that can exceed Ollama's small default
+# context. The derived model reuses the same weight blobs; it does not create a
+# second 1.4 GB copy.
+PARAMETER num_ctx 16384
+PARAMETER temperature 0

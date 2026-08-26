@@ -53,20 +53,22 @@ button { cursor: pointer; }
 h1, h2, h3, p { margin-top: 0; }
 h1 { font-size: clamp(38px, 5vw, 66px); line-height: .98; letter-spacing: -.055em; margin-bottom: 20px; max-width: 770px; }
 .hero-copy p { color: var(--muted); font-size: 16px; line-height: 1.6; max-width: 680px; margin-bottom: 0; }
-.score-card { flex: 0 0 284px; background: var(--ink); color: #fff; padding: 22px; border-radius: 16px; display: flex; align-items: center; gap: 17px; }
-.score-ring { width: 76px; height: 76px; border: 7px solid var(--accent); border-right-color: #3b3f35; border-radius: 50%; display: grid; place-content: center; text-align: center; transform: rotate(-35deg); }
-.score-ring span, .score-ring small { transform: rotate(35deg); }
-.score-ring span { font-size: 26px; font-weight: 750; line-height: 1; }
-.score-ring small { font-size: 9px; color: #93998e; }
-.score-card > div:last-child { display: grid; gap: 5px; }
-.score-card b { font-size: 14px; }
-.score-card > div > span { font-size: 11px; color: #a3a89e; }
-.metrics-grid { display: grid; grid-template-columns: repeat(4, 1fr); border: 1px solid var(--line); background: #fff; border-radius: 14px; overflow: hidden; margin-bottom: 18px; }
-.metrics-grid article { padding: 22px; display: grid; gap: 8px; border-right: 1px solid var(--line); }
+.metric-note-card { flex: 0 0 300px; background: var(--ink); color: #fff; padding: 22px; border-radius: 16px; display: flex; align-items: center; gap: 17px; }
+.metric-count { width: 76px; height: 76px; flex: 0 0 auto; border: 2px solid var(--accent); border-radius: 13px; display: grid; place-content: center; text-align: center; }
+.metric-count span { color: var(--accent); font-size: 27px; font-weight: 750; line-height: 1; }
+.metric-count small { margin-top: 3px; color: #93998e; font-size: 8px; text-transform: uppercase; letter-spacing: .08em; }
+.metric-note-card > div:last-child { display: grid; gap: 5px; }
+.metric-note-card b { font-size: 14px; }
+.metric-note-card > div > span { font-size: 11px; color: #a3a89e; line-height: 1.4; }
+.metrics-summary { display: grid; grid-template-columns: minmax(0, 3fr) minmax(190px, .9fr); gap: 10px; margin-bottom: 18px; }
+.metrics-grid { display: grid; grid-template-columns: repeat(3, 1fr); border: 1px solid var(--line); background: #fff; border-radius: 14px; overflow: hidden; }
+.metrics-grid article, .volume-metric-card { padding: 22px; display: grid; gap: 8px; }
+.metrics-grid article { border-right: 1px solid var(--line); }
 .metrics-grid article:last-child { border-right: 0; }
-.metrics-grid span { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .08em; }
-.metrics-grid strong { font-size: 30px; letter-spacing: -.04em; }
-.metrics-grid em { font-style: normal; font-size: 11px; color: #c44c29; }
+.volume-metric-card { border: 1px solid var(--line); border-radius: 14px; background: #fff; }
+.metrics-summary article > span { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .08em; }
+.metrics-summary article > strong { font-size: 30px; letter-spacing: -.04em; }
+.metrics-summary article > em { color: var(--muted); font-size: 11px; font-style: normal; }
 .metrics-grid .good { color: #467a24; }
 .priority-card { background: var(--purple); color: #fff; border: 1px solid var(--ink); border-radius: 14px; padding: 22px 24px; display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 20px; box-shadow: 5px 5px 0 var(--ink); margin-bottom: 72px; }
 .priority-marker { width: 46px; height: 46px; border-radius: 50%; background: var(--accent); color: var(--ink); display: grid; place-content: center; font-size: 25px; font-weight: 800; }
@@ -91,9 +93,9 @@ th button { border: 0; padding: 0; background: transparent; color: inherit; font
 td { padding: 13px 14px; font-size: 12px; border-bottom: 1px solid #ecece6; white-space: nowrap; }
 tbody tr:last-child td { border-bottom: 0; }
 tbody tr:hover { background: #fafaf6; }
-.coverage-cell { display: flex; align-items: center; gap: 8px; }
-.coverage-cell > span { width: 52px; height: 4px; background: #e5e6df; border-radius: 99px; overflow: hidden; }
-.coverage-cell i { display: block; height: 100%; background: var(--ink); }
+.document-share-cell { display: flex; align-items: center; gap: 8px; }
+.document-share-cell > span { width: 52px; height: 4px; background: #e5e6df; border-radius: 99px; overflow: hidden; }
+.document-share-cell i { display: block; height: 100%; background: var(--ink); }
 .status { display: inline-flex; border-radius: 999px; padding: 5px 9px; font-size: 9px; font-weight: 700; }
 .status-добавить { background: #ffe4d8; color: #9f3515; }
 .status-норма { background: #e5f3d9; color: #3e6d21; }

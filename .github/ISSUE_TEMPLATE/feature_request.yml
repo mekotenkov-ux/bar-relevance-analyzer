@@ -1,0 +1,54 @@
+name: Предложить улучшение
+description: Новая возможность или изменение поведения БАР
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Какую проблему нужно решить?
+      description: Опишите пользовательский сценарий, а не только желаемую реализацию.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Предлагаемое решение
+      description: Как должно выглядеть поведение и для кого оно полезно?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Альтернативы
+      description: Какие обходные пути или другие решения вы рассматривали?
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Область
+      options:
+        - Аналитические метрики
+        - Загрузка и фильтрация страниц
+        - Семантические связи
+        - Интерфейс и визуализация
+        - Экспорт и хранение
+        - Self-hosting и эксплуатация
+        - Документация
+        - Другое
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Критерии готовности
+      description: Как можно проверить, что задача решена?
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Перед отправкой
+      options:
+        - label: Я проверил существующие issues и не нашёл аналогичное предложение.
+          required: true
+        - label: Предложение не требует публикации credentials или закрытых данных.
+          required: true

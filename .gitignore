@@ -21,15 +21,20 @@
 # misc
 .DS_Store
 *.pem
+*.key
+*.p12
+*.pfx
 
 # debug
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
+*.log
 
-# env files (can opt-in for committing if needed)
+# Runtime secrets and local environment files
 .env*
+/.dev.vars*
 
 # vercel
 .vercel
@@ -38,6 +43,26 @@ yarn-error.log*
 /.wrangler/
 /outputs/
 /work/
+/artifacts/
+*.tsbuildinfo
+
+# Python helper services
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+services/triplets-symbolic/.venv/
+services/triplets-symbolic/.stanza-models/
+services/triplets-symbolic/results/
+
+# Local model weights
+*.gguf
+*.safetensors
+*.onnx
+*.pt
+*.pth
 
 # local preview logs
 dev-output.log

@@ -1,0 +1,11 @@
+services:
+  spacy:
+    build:
+      context: ../..
+      dockerfile: services/triplets-symbolic/Dockerfile
+    ports:
+      - "127.0.0.1:8092:8092"
+    environment:
+      TRIPLET_SPACY_MAX_REQUEST_BYTES: "128000000"
+      TRIPLET_SPACY_MAX_RELATIONS: "25000"
+    restart: unless-stopped
