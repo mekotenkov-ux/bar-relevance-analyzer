@@ -1,4 +1,6 @@
-type SearchEngine = "google" | "yandex";
+import { resolveXmlRiverRegion, type XmlRiverSearchEngine } from "@/lib/xmlriver-regions";
+
+type SearchEngine = XmlRiverSearchEngine;
 
 type SearchRequest = {
   query?: string;
@@ -240,8 +242,12 @@ export async function POST(request: Request) {
     baseUrl.searchParams.set("query", query);
     baseUrl.searchParams.set("groupby", String(XMLRIVER_GROUP_SIZE));
     baseUrl.searchParams.set("device", payload.device || "desktop");
-    const region = payload.region?.trim();
-    if (region) baseUrl.searchParams.set(engine === "yandex" ? "lr" : "loc", region);
+    const regionInput = payload.region?.trim() ?? "";
+    const region = regionInput ? resolveXmlRiverRegion(engine, regionInput) : null;
+    if (regionInput && !region) {
+      return Response.json({ error: "Неизвестный регион XMLRiver. Выберите регион из справочника или укажите его числовой код" }, { status: 400 });
+    }
+    if (region) baseUrl.searchParams.set(engine === "yandex" ? "lr" : "loc", region.code);
     if (engine === "yandex") {
       const requestedLanguage = payload.language?.trim().toLowerCase();
       baseUrl.searchParams.set("lang", requestedLanguage && requestedLanguage !== "auto" && YANDEX_LANGUAGES.has(requestedLanguage)
@@ -335,6 +341,7 @@ export async function POST(request: Request) {
     return Response.json({
       query,
       engine,
+      region,
       language: payload.language || "auto",
       requestedCount,
       competitors,

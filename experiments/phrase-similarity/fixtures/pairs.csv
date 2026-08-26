@@ -1,0 +1,101 @@
+id,language,topic,query,candidate,label,relation
+p001,ru,seo_education,SEO курсы,SEO курсы,3,exact
+p002,ru,seo_education,SEO курсы,обучение SEO,3,paraphrase
+p003,ru,seo_education,SEO курсы,обучение поисковой оптимизации,3,synonym
+p004,ru,seo_education,SEO курсы,школа SEO,2,close_expansion
+p005,ru,seo_education,SEO курсы,обучение продвижению сайтов,2,close_expansion
+p006,ru,seo_education,SEO курсы,SEO агентство,1,topic_only
+p007,ru,seo_education,SEO курсы,услуги поискового продвижения,1,intent_mismatch
+p008,ru,seo_education,SEO курсы,месяц обучения,1,generic_context
+p009,ru,seo_education,SEO курсы,московская бизнес школа,0,hard_negative
+p010,ru,seo_education,SEO курсы,академия дизайна,0,unrelated
+p011,ru,site_promotion,продвижение сайта,продвижение сайта,3,exact
+p012,ru,site_promotion,продвижение сайта,раскрутка сайта,3,synonym
+p013,ru,site_promotion,продвижение сайта,SEO продвижение веб-сайта,3,paraphrase
+p014,ru,site_promotion,продвижение сайта,поисковая оптимизация сайта,2,close_expansion
+p015,ru,site_promotion,продвижение сайта,рост позиций в поиске,2,close_expansion
+p016,ru,site_promotion,продвижение сайта,создание сайта,1,intent_mismatch
+p017,ru,site_promotion,продвижение сайта,аудит сайта,1,topic_only
+p018,ru,site_promotion,продвижение сайта,месяц продвижения,1,generic_context
+p019,ru,site_promotion,продвижение сайта,продвижение по службе,0,lexical_trap
+p020,ru,site_promotion,продвижение сайта,доставка продуктов,0,unrelated
+p021,ru,site_audit,аудит сайта,аудит сайта,3,exact
+p022,ru,site_audit,аудит сайта,SEO аудит,3,synonym
+p023,ru,site_audit,аудит сайта,проверка состояния сайта,3,paraphrase
+p024,ru,site_audit,аудит сайта,анализ сайта,2,broader
+p025,ru,site_audit,аудит сайта,технический аудит SEO-параметров,2,close_expansion
+p026,ru,site_audit,аудит сайта,продвижение сайта,1,topic_only
+p027,ru,site_audit,аудит сайта,разработка сайта,1,intent_mismatch
+p028,ru,site_audit,аудит сайта,отчет специалиста,1,generic_context
+p029,ru,site_audit,аудит сайта,бухгалтерский аудит компании,0,lexical_trap
+p030,ru,site_audit,аудит сайта,купить квартиру,0,unrelated
+p031,ru,context_ads,контекстная реклама,контекстная реклама,3,exact
+p032,ru,context_ads,контекстная реклама,PPC реклама,3,synonym
+p033,ru,context_ads,контекстная реклама,реклама в Яндекс Директ,3,paraphrase
+p034,ru,context_ads,контекстная реклама,платная поисковая реклама,2,close_expansion
+p035,ru,context_ads,контекстная реклама,настройка рекламных кампаний,2,close_expansion
+p036,ru,context_ads,контекстная реклама,таргетированная реклама,1,topic_only
+p037,ru,context_ads,контекстная реклама,SEO продвижение,1,adjacent_service
+p038,ru,context_ads,контекстная реклама,рекламный бюджет на месяц,1,generic_context
+p039,ru,context_ads,контекстная реклама,контекстное меню ресторана,0,lexical_trap
+p040,ru,context_ads,контекстная реклама,курсы английского языка,0,unrelated
+p041,ru,web_development,разработка сайта,разработка сайта,3,exact
+p042,ru,web_development,разработка сайта,создание сайта,3,synonym
+p043,ru,web_development,разработка сайта,веб-разработка,3,paraphrase
+p044,ru,web_development,разработка сайта,разработка интернет-магазина,2,narrower
+p045,ru,web_development,разработка сайта,заказать сайт под ключ,2,commercial_variant
+p046,ru,web_development,разработка сайта,дизайн сайта,1,topic_only
+p047,ru,web_development,разработка сайта,поддержка сайта,1,adjacent_service
+p048,ru,web_development,разработка сайта,продвижение сайта,1,intent_mismatch
+p049,ru,web_development,разработка сайта,разработка месторождения,0,lexical_trap
+p050,ru,web_development,разработка сайта,лечение зубов,0,unrelated
+p051,ru,real_estate,купить квартиру,купить квартиру,3,exact
+p052,ru,real_estate,купить квартиру,покупка квартиры,3,paraphrase
+p053,ru,real_estate,купить квартиру,приобрести жилье,3,synonym
+p054,ru,real_estate,купить квартиру,квартиры на продажу,2,close_expansion
+p055,ru,real_estate,купить квартиру,новостройки от застройщика,2,narrower
+p056,ru,real_estate,купить квартиру,аренда квартиры,1,intent_mismatch
+p057,ru,real_estate,купить квартиру,ремонт квартиры,1,topic_only
+p058,ru,real_estate,купить квартиру,ипотека на жилье,1,adjacent_intent
+p059,ru,real_estate,купить квартиру,купить онлайн-курс,0,lexical_trap
+p060,ru,real_estate,купить квартиру,SEO агентство,0,unrelated
+p061,en,marketing_education,online marketing course,online marketing course,3,exact
+p062,en,marketing_education,online marketing course,digital marketing training,3,synonym
+p063,en,marketing_education,online marketing course,learn internet marketing online,3,paraphrase
+p064,en,marketing_education,online marketing course,marketing certification program,2,close_expansion
+p065,en,marketing_education,online marketing course,SEO course,2,narrower
+p066,en,marketing_education,online marketing course,digital marketing agency,1,intent_mismatch
+p067,en,marketing_education,online marketing course,social media services,1,topic_only
+p068,en,marketing_education,online marketing course,one month course duration,1,generic_context
+p069,en,marketing_education,online marketing course,online grocery delivery,0,lexical_trap
+p070,en,marketing_education,online marketing course,apartments for sale,0,unrelated
+p071,es,seo_education_es,cursos de SEO,cursos de SEO,3,exact
+p072,es,seo_education_es,cursos de SEO,formación SEO,3,synonym
+p073,es,seo_education_es,cursos de SEO,aprender posicionamiento web,3,paraphrase
+p074,es,seo_education_es,cursos de SEO,escuela de marketing digital,2,close_expansion
+p075,es,seo_education_es,cursos de SEO,curso de marketing online,2,broader
+p076,es,seo_education_es,cursos de SEO,agencia SEO,1,intent_mismatch
+p077,es,seo_education_es,cursos de SEO,servicios de posicionamiento,1,topic_only
+p078,es,seo_education_es,cursos de SEO,duración del curso,1,generic_context
+p079,es,seo_education_es,cursos de SEO,comprar apartamento,0,unrelated
+p080,es,seo_education_es,cursos de SEO,academia de cocina,0,hard_negative
+p081,de,seo_agency_de,SEO Agentur,SEO Agentur,3,exact
+p082,de,seo_agency_de,SEO Agentur,Suchmaschinenoptimierung Agentur,3,paraphrase
+p083,de,seo_agency_de,SEO Agentur,SEO Dienstleister,3,synonym
+p084,de,seo_agency_de,SEO Agentur,SEO Beratung,2,close_expansion
+p085,de,seo_agency_de,SEO Agentur,Online-Marketing-Agentur,2,broader
+p086,de,seo_agency_de,SEO Agentur,SEO Kurs,1,intent_mismatch
+p087,de,seo_agency_de,SEO Agentur,Website erstellen,1,adjacent_service
+p088,de,seo_agency_de,SEO Agentur,monatliche SEO Kosten,1,generic_context
+p089,de,seo_agency_de,SEO Agentur,Wohnung kaufen,0,unrelated
+p090,de,seo_agency_de,SEO Agentur,Sprachschule,0,unrelated
+p091,ru,seo_promotion,SEO продвижение,поисковое продвижение,3,synonym
+p092,ru,seo_promotion,SEO продвижение,продвижение сайтов,2,close_expansion
+p093,ru,seo_promotion,SEO продвижение,поисковая оптимизация,2,close_expansion
+p094,ru,seo_promotion,SEO продвижение,SMM продвижение,1,character_trap
+p095,ru,seo_promotion,SEO продвижение,SEA продвижение,1,character_trap
+p096,ru,seo_promotion,SEO продвижение,контекстная реклама,1,adjacent_service
+p097,ru,seo_promotion,SEO продвижение,технический аудит,1,topic_only
+p098,ru,seo_promotion,SEO продвижение,продвижение по службе,0,lexical_trap
+p099,ru,seo_promotion,SEO продвижение,дорожный трафик,0,unrelated
+p100,ru,seo_promotion,SEO продвижение,прогноз погоды,0,unrelated

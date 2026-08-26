@@ -28,14 +28,15 @@
     "dev": "vinext dev",
     "build": "vinext build",
     "start": "vinext start",
-    "test": "node --experimental-strip-types --test tests/rendered-html.test.mjs tests/semantic-v3.test.mjs tests/analyzer-expansion.test.mjs tests/lemma-v4.test.mjs tests/stop-presets.test.mjs tests/metrics-v5.test.mjs tests/importance-v7.test.mjs tests/ngram-importance-v10.test.mjs tests/clouds-v8.test.mjs tests/cloud-layout.test.mjs tests/triplets-v9.test.mjs tests/spacy-triplets-v10.test.mjs tests/deterministic-triplets-contract.test.mjs",
+    "test": "node --experimental-strip-types --test tests/rendered-html.test.mjs tests/semantic-v3.test.mjs tests/analyzer-expansion.test.mjs tests/lemma-v4.test.mjs tests/stop-presets.test.mjs tests/multilingual-v13.test.mjs tests/metrics-v5.test.mjs tests/importance-v7.test.mjs tests/ngram-importance-v10.test.mjs tests/e5-phrase-similarity-v11.test.mjs tests/density-nesting-v12.test.mjs tests/clouds-v8.test.mjs tests/cloud-layout.test.mjs",
     "typecheck": "tsc --noEmit --incremental false --pretty false",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
-    "python:check": "python -m compileall -q -x .venv services/triplets services/triplets-symbolic",
+    "python:check": "python -m compileall -q -x .venv services/phrase-embeddings && python -m unittest services/phrase-embeddings/test_server.py",
     "check": "npm run typecheck && npm run lint && npm run build && npm test && npm run python:check",
     "db:generate": "drizzle-kit generate"
   },
   "dependencies": {
+    "az": "^0.2.3",
     "drizzle-orm": "0.45.2",
     "react": "19.2.8",
     "react-dom": "19.2.8",

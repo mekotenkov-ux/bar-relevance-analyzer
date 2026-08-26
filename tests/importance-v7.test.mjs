@@ -77,7 +77,6 @@ async function importanceFixture() {
           queries: ["seo курс"],
           serpQuery: "seo курс",
           language: "ru",
-          useFirecrawl: false,
           competitors,
           ownPage: { name: "Наша страница", url: "https://ours.example.test/course" },
           search: { engine: "google", region: "ru", device: "desktop", found: competitors.length },
@@ -213,6 +212,7 @@ test("month abbreviations merge before counting while exact query N-grams stay e
   const genericMonthPhrase = report.ngrams.find((row) => row.key === `${course.key} ${month.key}`);
   assert.ok(exactPhrase && genericMonthPhrase);
   assert.equal(exactPhrase.keywordHit, true, "the exact input phrase must keep its explicit keyword marker");
+  assert.equal(exactPhrase.keyMatch, "exact", "the API must expose the exact phrase-hit classification to the table");
   assert.equal(exactPhrase.keySimilarity, 1, "the exact input phrase must keep full query similarity");
   assert.equal(exactPhrase.importance, 100, "an exact query present in every competitor must reach the top of the public scale");
   for (const zone of ["all", "title", "h1", "headings", "text", "anchors"]) {
@@ -339,7 +339,6 @@ async function crowdedZoneFixture() {
           queries: ["baseline topic"],
           serpQuery: "baseline topic",
           language: "en",
-          useFirecrawl: false,
           competitors,
           ownPage: { name: "Zone own", url: "https://zone-own.example.test/page" },
           search: { engine: "google", region: "us", device: "desktop", found: competitors.length },

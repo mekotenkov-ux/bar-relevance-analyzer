@@ -109,12 +109,12 @@ test("the curated preset keeps universal noise and excludes risky semantic terms
 test("the analyzer form starts with the preset and exposes restore and clear controls", async () => {
   const page = await readFile(new URL("../app/analyzer/page.tsx", import.meta.url), "utf8");
 
-  assert.match(page, /DEFAULT_STOP_WORDS_TEXT/);
-  assert.match(page, /DEFAULT_STOP_PHRASES_TEXT/);
-  assert.match(page, /OPTIONAL_WEB_STOP_WORDS/);
-  assert.match(page, /OPTIONAL_WEB_STOP_PHRASES/);
-  assert.match(page, /useState\(DEFAULT_STOP_WORDS_TEXT\)/);
-  assert.match(page, /useState\(DEFAULT_STOP_PHRASES_TEXT\)/);
+  assert.match(page, /stopTermPresetFor/);
+  assert.match(page, /stopTermPresetText/);
+  assert.match(page, /LANGUAGE_OPTIONS/);
+  assert.match(page, /languageCapability/);
+  assert.match(page, /stopDrafts/);
+  assert.match(page, /selectLanguage/);
   assert.match(page, /aria-label=["']Управление стоп-листом["']/u);
   assert.match(page, />Базовый(?:\s|<span>)/u);
   assert.match(page, />\+ Веб-шум(?:\s|<span>)/u);
@@ -125,15 +125,37 @@ test("the analyzer form starts with the preset and exposes restore and clear con
   assert.match(stopFields, /applyDefaultStops/);
   assert.match(stopFields, /applyWebStops/);
   assert.match(stopFields, /clearStops/);
-  assert.match(stopFields, /setStopWords\(DEFAULT_STOP_WORDS_TEXT\)/);
-  assert.match(stopFields, /setStopPhrases\(DEFAULT_STOP_PHRASES_TEXT\)/);
+  assert.match(stopFields, /setStopWords\(basePreset\.words\)/);
+  assert.match(stopFields, /setStopPhrases\(basePreset\.phrases\)/);
   const applyWebStops = stopFields.slice(stopFields.indexOf("applyWebStops"), stopFields.indexOf("clearStops"));
-  assert.match(applyWebStops, /setStopWords\(WEB_STOP_WORDS_TEXT\)/);
-  assert.match(applyWebStops, /setStopPhrases\(WEB_STOP_PHRASES_TEXT\)/);
-  assert.match(page, /WEB_STOP_WORDS\s*=\s*mergeStopTerms\(DEFAULT_STOP_WORDS,\s*OPTIONAL_WEB_STOP_WORDS\)/);
-  assert.match(page, /WEB_STOP_PHRASES\s*=\s*mergeStopTerms\(DEFAULT_STOP_PHRASES,\s*OPTIONAL_WEB_STOP_PHRASES\)/);
+  assert.match(applyWebStops, /setStopWords\(webPreset\.words\)/);
+  assert.match(applyWebStops, /setStopPhrases\(webPreset\.phrases\)/);
+  assert.match(page, /stopDrafts\.current\[language\]/);
+  assert.match(page, /stopDrafts\.current\[nextLanguage\]/);
+  assert.match(page, /<StopFields language=\{language\}/);
+  assert.match(page, /<StopFields compact language=\{result\.meta\.language\}/);
   assert.match(stopFields, /setStopWords\(["']{2}\)/);
   assert.match(stopFields, /setStopPhrases\(["']{2}\)/);
+});
+
+test("editable presets are localized for Russian, English and Spanish", async () => {
+  const { STOP_TERM_PRESETS, stopTermPresetFor, stopTermPresetText } = await loadPresetModule();
+
+  assert.deepEqual(Object.keys(STOP_TERM_PRESETS).sort(), ["en", "es", "ru"]);
+  for (const language of ["ru", "en", "es"]) {
+    const preset = stopTermPresetFor(language);
+    assert.equal(preset.language, language);
+    assert.ok(preset.words.length > 0, `${language} must provide editable stop words`);
+    assert.ok(preset.phrases.length > 0, `${language} must provide editable stop phrases`);
+    assert.ok(preset.optionalWebWords.length > 0, `${language} must provide optional web words`);
+    assert.ok(preset.optionalWebPhrases.length > 0, `${language} must provide optional web phrases`);
+    assert.equal(stopTermPresetText(language).words, preset.words.join("\n"));
+  }
+  assert.deepEqual(stopTermPresetText("uk"), { words: "", phrases: "" });
+
+  for (const preset of Object.values(STOP_TERM_PRESETS)) {
+    assert.ok(preset.words.every((entry) => !entry.includes(" ")), `${preset.language}: multiword word preset`);
+  }
 });
 
 test("safe and optional presets use the analyzer's existing stem and phrase filters", { concurrency: false }, async () => {

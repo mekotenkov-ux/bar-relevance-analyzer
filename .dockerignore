@@ -11,9 +11,9 @@ dist/
 artifacts/
 outputs/
 work/
-services/triplets-symbolic/.venv/
-services/triplets-symbolic/.stanza-models/
-services/triplets-symbolic/results/
+services/**/.venv/
+services/**/.*-models/
+services/**/results/
 **/__pycache__/
 *.py[cod]
 *.log

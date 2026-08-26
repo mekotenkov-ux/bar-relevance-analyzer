@@ -4,6 +4,60 @@ import { useMemo, useState } from "react";
 import Image from "next/image";
 import { cloudWords, documents, lemmas, navItems, ngrams, oursCloud, wordCounts } from "./data";
 
+type SortDirection = "asc" | "desc";
+type SortState<Key extends string> = { key: Key; direction: SortDirection };
+type LemmaSortKey = "lemma" | "competitors" | "ours" | "median" | "documentShare" | "importance" | "status";
+type NgramSortKey = "phrase" | "sites" | "median" | "ours" | "importance" | "status";
+type VolumeSortKey = "domain" | "words" | "useful" | "headings" | "sentences" | "gap";
+
+function compareSortValues(left: string | number, right: string | number) {
+  if (typeof left === "number" && typeof right === "number") return left - right;
+  return String(left).localeCompare(String(right), "ru", { numeric: true, sensitivity: "base" });
+}
+
+function sortRows<Row, Key extends string>(
+  rows: readonly Row[],
+  state: SortState<Key> | null,
+  getValue: (row: Row, key: Key) => string | number,
+) {
+  if (!state) return [...rows];
+  const multiplier = state.direction === "asc" ? 1 : -1;
+  return rows
+    .map((row, index) => ({ row, index }))
+    .sort((left, right) => {
+      const comparison = compareSortValues(getValue(left.row, state.key), getValue(right.row, state.key));
+      return comparison === 0 ? left.index - right.index : comparison * multiplier;
+    })
+    .map(({ row }) => row);
+}
+
+function LandingSortableHeader<Key extends string>({
+  label,
+  sortKey,
+  state,
+  onSort,
+}: {
+  label: string;
+  sortKey: Key;
+  state: SortState<Key> | null;
+  onSort: (state: SortState<Key>) => void;
+}) {
+  const active = state?.key === sortKey;
+  const direction = active ? state.direction : undefined;
+  const ariaSort: "ascending" | "descending" | "none" = direction === "asc" ? "ascending" : direction === "desc" ? "descending" : "none";
+  return (
+    <th scope="col" aria-sort={ariaSort}>
+      <button
+        type="button"
+        title={`Сортировать таблицу по колонке «${label}»`}
+        onClick={() => onSort({ key: sortKey, direction: active && direction === "asc" ? "desc" : "asc" })}
+      >
+        {label} <span aria-hidden="true">{direction === "asc" ? "↑" : direction === "desc" ? "↓" : "↕"}</span>
+      </button>
+    </th>
+  );
+}
+
 function DownloadButton({ label, rows }: { label: string; rows: Record<string, unknown>[] }) {
   const download = () => {
     const keys = Object.keys(rows[0] || {});
@@ -16,12 +70,12 @@ function DownloadButton({ label, rows }: { label: string; rows: Record<string, u
     link.click();
     URL.revokeObjectURL(url);
   };
-  return <button className="button button-ghost" onClick={download}><span>↓</span> Скачать CSV</button>;
+  return <button className="button button-ghost" title={`Скачать таблицу «${label}» в CSV`} onClick={download}><span>↓</span> Скачать CSV</button>;
 }
 
 function SectionHeader({ eyebrow, title, note, rows }: { eyebrow: string; title: string; note: string; rows?: Record<string, unknown>[] }) {
   return (
-    <div className="section-head">
+    <div className="section-head" title={note}>
       <div>
         <span className="eyebrow">{eyebrow}</span>
         <h2>{title}</h2>
@@ -36,15 +90,27 @@ export default function Home() {
   const [active, setActive] = useState("overview");
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("Все");
-  const [sort, setSort] = useState<"importance" | "documentShare">("importance");
+  const [lemmaSort, setLemmaSort] = useState<SortState<LemmaSortKey>>({ key: "importance", direction: "desc" });
+  const [ngramSort, setNgramSort] = useState<SortState<NgramSortKey>>({ key: "importance", direction: "desc" });
+  const [volumeSort, setVolumeSort] = useState<SortState<VolumeSortKey> | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
 
   const filteredLemmas = useMemo(() => {
-    return lemmas
+    const rows = lemmas
       .filter((row) => row.lemma.includes(query.toLowerCase()))
-      .filter((row) => filter === "Все" || (filter === "Дефицит" ? row.status === "Добавить" : row.status === "Снизить"))
-      .sort((a, b) => b[sort] - a[sort]);
-  }, [query, filter, sort]);
+      .filter((row) => filter === "Все" || (filter === "Дефицит" ? row.status === "Добавить" : row.status === "Снизить"));
+    return sortRows(rows, lemmaSort, (row, key) => row[key]);
+  }, [query, filter, lemmaSort]);
+
+  const sortedNgrams = useMemo(
+    () => sortRows(ngrams, ngramSort, (row, key) => row[key]),
+    [ngramSort],
+  );
+
+  const sortedWordCounts = useMemo(
+    () => sortRows(wordCounts, volumeSort, (row, key) => key === "gap" ? row.words - 1834 : row[key]),
+    [volumeSort],
+  );
 
   const goTo = (id: string) => {
     setActive(id);
@@ -105,21 +171,15 @@ export default function Home() {
 
           <section className="metrics-summary" aria-label="Ключевые показатели">
             <div className="metrics-grid">
-              <article><span>TF-IDF ключей</span><strong>68%</strong><em>сырой вес 2,04</em></article>
-              <article><span>Взвешенный охват</span><strong>64%</strong><em>важные термины и фразы</em></article>
-              <article><span>Взвешенная плотность</span><strong>58%</strong><em>выполнение ориентиров по вхождениям</em></article>
+              <article title="После «из» показано среднее значение конкурентов"><span>TF-IDF ключей</span><strong>68% <small>из 74%</small></strong><em>сырой вес 2,04 · справа среднее конкурентов</em></article>
+              <article title="После «из» показано среднее значение конкурентов"><span>Взвешенный охват</span><strong>64% <small>из 71%</small></strong><em>важные термины и фразы · справа среднее конкурентов</em></article>
+              <article title="После «из» показано среднее значение конкурентов"><span>Взвешенная плотность</span><strong>58% <small>из 69%</small></strong><em>выполнение ориентиров · справа среднее конкурентов</em></article>
             </div>
             <article className="volume-metric-card"><span>Объём текста</span><strong>1 126</strong><em>слов · нужно ≈ 1 650</em></article>
           </section>
 
-          <section className="priority-card">
-            <div className="priority-marker">!</div>
-            <div><span className="eyebrow">Главный вывод</span><h3>Добавьте тематическую глубину, а не просто ключи</h3><p>Странице не хватает блоков про разговорную практику, формат занятий и квалификацию преподавателей. Они дадут больше эффекта, чем повтор слова «курс».</p></div>
-            <button className="button button-accent" onClick={() => goTo("lemmas")}>Смотреть рекомендации</button>
-          </section>
-
           <section id="lemmas" className="report-section card-section">
-            <SectionHeader eyebrow="01 · Лексика" title="Таблица лемм" note="Слова приведены к начальной форме. Важность рассчитывается на основе TF-IDF и других сигналов релевантности." rows={lemmas as unknown as Record<string, unknown>[]} />
+            <SectionHeader eyebrow="01 · Лексика" title="Таблица лемм" note="Слова приведены к начальной форме. Важность — оценка 0–100: она учитывает TF-IDF, число документов с леммой и подтверждение в ключах и заголовках; точные коэффициенты не показываются." rows={lemmas as unknown as Record<string, unknown>[]} />
             <div className="table-toolbar">
               <div className="segmented">
                 {["Все", "Дефицит", "Избыток"].map((item) => <button key={item} className={filter === item ? "active" : ""} onClick={() => setFilter(item)}>{item}</button>)}
@@ -128,7 +188,7 @@ export default function Home() {
             </div>
             <div className="table-wrap">
               <table>
-                <thead><tr><th>Лемма</th><th>Сайтов</th><th>У нас</th><th>Медиана</th><th><button onClick={() => setSort("documentShare")}>Доля документов ↕</button></th><th><button onClick={() => setSort("importance")}>Важность ↕</button></th><th>Рекомендация</th></tr></thead>
+                <thead><tr><LandingSortableHeader label="Лемма" sortKey="lemma" state={lemmaSort} onSort={setLemmaSort} /><LandingSortableHeader label="Сайтов" sortKey="competitors" state={lemmaSort} onSort={setLemmaSort} /><LandingSortableHeader label="У нас" sortKey="ours" state={lemmaSort} onSort={setLemmaSort} /><LandingSortableHeader label="Медиана" sortKey="median" state={lemmaSort} onSort={setLemmaSort} /><LandingSortableHeader label="Доля документов" sortKey="documentShare" state={lemmaSort} onSort={setLemmaSort} /><LandingSortableHeader label="Важность" sortKey="importance" state={lemmaSort} onSort={setLemmaSort} /><LandingSortableHeader label="Рекомендация" sortKey="status" state={lemmaSort} onSort={setLemmaSort} /></tr></thead>
                 <tbody>{filteredLemmas.map((row) => <tr key={row.lemma}><td><b>{row.lemma}</b></td><td>{row.competitors} / 13</td><td>{row.ours}</td><td>{row.median}</td><td><div className="document-share-cell"><span><i style={{ width: row.documentShare + "%" }} /></span>{row.documentShare}%</div></td><td><strong>{row.importance.toFixed(1)}</strong></td><td><span className={"status status-" + row.status.toLowerCase()}>{row.status}</span></td></tr>)}</tbody>
               </table>
             </div>
@@ -152,9 +212,9 @@ export default function Home() {
           </section>
 
           <section id="ngrams" className="report-section card-section">
-            <SectionHeader eyebrow="03 · Словосочетания" title="N‑граммы" note="Устойчивые фразы из двух и трёх слов, которые регулярно встречаются в документах поисковой выдачи." rows={ngrams as unknown as Record<string, unknown>[]} />
+            <SectionHeader eyebrow="03 · Словосочетания" title="N‑граммы" note="Важность — оценка 0–100: она учитывает распространённость фразы у конкурентов, смысловую связь с ключами и подтверждение в ключе и заголовках; точные коэффициенты не показываются." rows={ngrams as unknown as Record<string, unknown>[]} />
             <div className="ngram-layout">
-              <div className="table-wrap"><table><thead><tr><th>N‑грамма</th><th>Сайтов</th><th>Медиана</th><th>У нас</th><th>Важность</th><th>Действие</th></tr></thead><tbody>{ngrams.map((row) => <tr key={row.phrase}><td><b>{row.phrase}</b></td><td>{row.sites} / 13</td><td>{row.median}</td><td>{row.ours}</td><td><strong>{row.importance}</strong></td><td><span className={row.status === "Норма" ? "status status-норма" : row.status.startsWith("Снизить") ? "status status-снизить" : "status status-добавить"}>{row.status}</span></td></tr>)}</tbody></table></div>
+              <div className="table-wrap"><table><thead><tr><LandingSortableHeader label="N‑грамма" sortKey="phrase" state={ngramSort} onSort={setNgramSort} /><LandingSortableHeader label="Сайтов" sortKey="sites" state={ngramSort} onSort={setNgramSort} /><LandingSortableHeader label="Медиана" sortKey="median" state={ngramSort} onSort={setNgramSort} /><LandingSortableHeader label="У нас" sortKey="ours" state={ngramSort} onSort={setNgramSort} /><LandingSortableHeader label="Важность" sortKey="importance" state={ngramSort} onSort={setNgramSort} /><LandingSortableHeader label="Действие" sortKey="status" state={ngramSort} onSort={setNgramSort} /></tr></thead><tbody>{sortedNgrams.map((row) => <tr key={row.phrase}><td><b>{row.phrase}</b></td><td>{row.sites} / 13</td><td>{row.median}</td><td>{row.ours}</td><td><strong>{row.importance}</strong></td><td><span className={row.status === "Норма" ? "status status-норма" : row.status.startsWith("Снизить") ? "status status-снизить" : "status status-добавить"}>{row.status}</span></td></tr>)}</tbody></table></div>
               <aside className="insight-panel"><span className="eyebrow">Быстрая победа</span><strong>«разговорный английский»</strong><p>Фраза есть у 9 из 13 конкурентов и полностью отсутствует на вашей странице.</p><div><span>Дефицит</span><b>3</b><small>рекомендуемых вхождения</small></div></aside>
             </div>
           </section>
@@ -171,7 +231,7 @@ export default function Home() {
               <div className="volume-gap"><span>Наша страница</span><strong>1 126</strong><small>−708 слов</small></div>
               <div><span>Рекомендуемый диапазон</span><strong>1 550–1 950</strong><small>без искусственного раздувания</small></div>
             </div>
-            <div className="table-wrap"><table><thead><tr><th>Документ</th><th>Всего слов</th><th>Полезный текст</th><th>Заголовки</th><th>Предложения</th><th>От медианы</th></tr></thead><tbody>{wordCounts.map((row) => <tr key={row.domain} className={row.ours ? "highlight-row" : ""}><td><b>{row.domain}</b>{row.ours && <small className="inline-label">наш</small>}</td><td>{row.words.toLocaleString("ru-RU")}</td><td>{row.useful.toLocaleString("ru-RU")}</td><td>{row.headings}</td><td>{row.sentences}</td><td><span className={row.words < 1500 ? "negative" : "positive"}>{row.words - 1834 > 0 ? "+" : ""}{(row.words - 1834).toLocaleString("ru-RU")}</span></td></tr>)}</tbody></table></div>
+            <div className="table-wrap"><table><thead><tr><LandingSortableHeader label="Документ" sortKey="domain" state={volumeSort} onSort={setVolumeSort} /><LandingSortableHeader label="Всего слов" sortKey="words" state={volumeSort} onSort={setVolumeSort} /><LandingSortableHeader label="Полезный текст" sortKey="useful" state={volumeSort} onSort={setVolumeSort} /><LandingSortableHeader label="Заголовки" sortKey="headings" state={volumeSort} onSort={setVolumeSort} /><LandingSortableHeader label="Предложения" sortKey="sentences" state={volumeSort} onSort={setVolumeSort} /><LandingSortableHeader label="От медианы" sortKey="gap" state={volumeSort} onSort={setVolumeSort} /></tr></thead><tbody>{sortedWordCounts.map((row) => <tr key={row.domain} className={row.ours ? "highlight-row" : ""}><td><b>{row.domain}</b>{row.ours && <small className="inline-label">наш</small>}</td><td>{row.words.toLocaleString("ru-RU")}</td><td>{row.useful.toLocaleString("ru-RU")}</td><td>{row.headings}</td><td>{row.sentences}</td><td><span className={row.words < 1500 ? "negative" : "positive"}>{row.words - 1834 > 0 ? "+" : ""}{(row.words - 1834).toLocaleString("ru-RU")}</span></td></tr>)}</tbody></table></div>
           </section>
 
           <footer className="report-footer"><div><Image src="/seomeat-logo.svg" alt="SEO Meat" width={152} height={16} /><span>БАР · бесплатный анализ релевантности</span></div><a href="https://seomeat.ru/" target="_blank" rel="noreferrer">Сделано в школе SEO Мясо ↗</a></footer>

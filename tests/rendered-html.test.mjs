@@ -23,6 +23,16 @@ test("renders the Russian analyzer interface", async () => {
   assert.doesNotMatch(html, /РЎРµСЂРІРёСЃ|РќР°Р№С‚Рё|РџРѕРёСЃРє|вЂ/);
 });
 
+test("does not publish the archived semantic-triplet API", async () => {
+  const worker = await loadWorker();
+  const response = await worker.fetch(new Request("http://localhost/api/analyze-triplets", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: "{}",
+  }), environment(), context());
+  assert.equal(response.status, 404);
+});
+
 test("keeps large analytical tables paginated and presents the three public document metrics", async () => {
   const [page, landing, core, css, layout, cloudLayout] = await Promise.all([
     readFile(new URL("../app/analyzer/page.tsx", import.meta.url), "utf8"),
@@ -48,19 +58,19 @@ test("keeps large analytical tables paginated and presents the three public docu
   assert.match(page, /Зона анализа лемм/);
   assert.match(page, /Зона анализа N-грамм/);
   assert.match(page, /Показать ещё 12/);
-  const importanceExplanation = "Важность рассчитывается на основе TF-IDF и других сигналов релевантности.";
-  assert.match(page, new RegExp(importanceExplanation.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-  assert.match(landing, new RegExp(importanceExplanation.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-  const enumeratedImportanceComponents = /распространённость среди конкурентов|совпадение с входными ключами|устойчивость сигнала по корпусу/iu;
-  assert.doesNotMatch(page, enumeratedImportanceComponents);
-  assert.doesNotMatch(landing, enumeratedImportanceComponents);
+  assert.match(page, /Важность — оценка 0–100/);
+  assert.match(page, /TF-IDF, число документов с леммой и подтверждение в ключах и заголовках/);
+  assert.match(page, /распространённость фразы у конкурентов и смысловая связь с ключами/);
+  assert.match(page, /Точные коэффициенты не показываются/);
+  assert.match(landing, /Важность — оценка 0–100/);
+  assert.match(landing, /точные коэффициенты не показываются/);
   const coreImportanceMethodology = core.match(/importance:\s*"([^"]+)"/)?.[1] ?? "";
   assert.equal(coreImportanceMethodology, "Важность рассчитывается по совокупности статистических и семантических сигналов релевантности.");
   assert.doesNotMatch(coreImportanceMethodology, /доля документов|точное совпадение|устойчивое присутствие|\bDF\b|[×*]/iu);
   assert.doesNotMatch(page, /TF-IDF × 1,35|нормализованный TF-IDF|бустер ×1,35|1[,.]15/iu);
   assert.doesNotMatch(landing, /TF-IDF × 1,35|нормализованный TF-IDF|бустер ×1,35|1[,.]15/iu);
   assert.match(page, /Q25–Q75/);
-  const lemmaSection = page.slice(page.indexOf("<h2>Леммы и важность</h2>"), page.indexOf("<h2>Облака слов:"));
+  const lemmaSection = page.slice(page.indexOf("<h2>Леммы и важность</h2>"), page.indexOf('<h2 id="clouds-heading">Облако</h2>'));
   assert.ok(lemmaSection.length > 0, "lemma section must be present in the analyzer source");
   assert.doesNotMatch(lemmaSection, /cosine|косинус/i);
   for (const label of ["TF-IDF ключей", "Взвешенный охват", "Взвешенная плотность"]) {
@@ -68,12 +78,19 @@ test("keeps large analytical tables paginated and presents the three public docu
     assert.match(landing, new RegExp(label));
   }
   assert.match(page, /Сравнение документов по метрикам/);
-  assert.match(page, /<span>Взвешенная плотность<\/span>/);
+  assert.match(page, /function average\(values: readonly number\[\]\)/);
+  assert.match(page, /const competitorMetricAverages =/);
+  assert.match(page, /benchmark=\{competitorDocuments\.length \? percent\(competitorMetricAverages\.keyTfidfScore\)/);
+  assert.match(page, /benchmark=\{competitorDocuments\.length \? percent\(competitorMetricAverages\.weightedCoverage\)/);
+  assert.match(page, /benchmark=\{competitorDocuments\.length \? percent\(competitorMetricAverages\.weightedDensity\)/);
+  assert.match(page, /из \{benchmark\}/);
+  assert.match(page, /DocumentSortableHeader label="Взвешенная плотность"/);
   assert.match(page, /percent\(result\.summary\.weightedDensity\)/);
   assert.match(page, /percent\(doc\.weightedDensity\)/);
   assert.match(page, /выполнение ориентиров по вхождениям/);
   assert.doesNotMatch(page, /Плотность \/ 1000|weightedDensity\)} \/ 1000|weightedDensity\)}[^\n]*на 1 000 слов/);
-  const landingDensity = landing.slice(landing.indexOf("<article><span>Взвешенная плотность"), landing.indexOf("</article>", landing.indexOf("<article><span>Взвешенная плотность")));
+  const landingDensityLabel = landing.indexOf("Взвешенная плотность");
+  const landingDensity = landing.slice(landingDensityLabel, landing.indexOf("</article>", landingDensityLabel));
   assert.match(landingDensity, /%/);
   assert.match(landingDensity, /выполнение ориентиров/);
   assert.doesNotMatch(landingDensity, /1 000|1000/);
@@ -82,8 +99,56 @@ test("keeps large analytical tables paginated and presents the three public docu
   assert.match(densityMethodology, /конкурентных медиан/);
   assert.doesNotMatch(densityMethodology, /medianCount/);
   assert.doesNotMatch(densityMethodology, /1 000|1000/);
-  assert.match(page, /N-граммы и сходство с ключами/);
-  assert.match(page, /Сходство с ключом/);
+  assert.match(page, /N-граммы и связь с ключами/);
+  assert.match(page, /Возможно ключ/);
+  assert.match(page, /SortableHeader label="Попадание в ключ"/);
+  assert.match(page, /row\.keywordHit === true \|\| row\.keyMatch === "exact"/);
+  assert.match(core, /keyMatch: exactQueryMatch \? "exact" : semantic\.keySimilarity > 0\.8 \? "possible" : "none"/);
+  assert.doesNotMatch(page, /<th>Ближайший ключ<\/th>|<th>Сходство с ключом<\/th>|<th>Приоритет<\/th>/);
+  assert.match(page, /function SortableHeader/);
+  assert.match(page, /aria-sort=\{ariaSort\}/);
+  assert.match(page, /const COLUMN_TOOLTIPS/);
+  assert.match(page, /function HelpTip/);
+  assert.match(page, /data-tooltip=\{text\}/);
+  assert.match(page, /title=\{explanation\}/);
+  assert.match(css, /\.helpTip::after/);
+  assert.match(page, /<h2 id="clouds-heading">Облако<\/h2>/);
+  assert.doesNotMatch(page, /Облака слов: три страницы на одной шкале/);
+  assert.match(page, /ТЗ для страницы/);
+  assert.match(page, /Копировать MD/);
+  assert.match(page, /buildPageBrief/);
+  assert.match(page, /\/api\/xmlriver-regions\?/);
+  assert.match(page, /<datalist id=\{`xmlriver-regions-/);
+  assert.match(page, /region: searchData\.region\?\.displayLabel \|\| searchData\.region\?\.label \|\| region/);
+  assert.match(page, /Москва, Россия — 213/);
+  assert.match(page, /const \[countryCode, setCountryCode\] = useState\("RU"\)/);
+  assert.match(page, /countries=1/);
+  assert.match(page, /new URLSearchParams\(\{ engine, countryCode, limit: "100" \}\)/);
+  assert.match(page, /<span>Страна<\/span>/);
+  assert.match(page, /<span>Город или регион<\/span>/);
+  assert.match(page, /const \[language, setLanguage\] = useState\("ru"\)/);
+  assert.match(page, /const INITIAL_STOP_TERMS = stopTermPresetText\("ru"\)/);
+  assert.match(page, /option\.morphology === "lemmatization" \? "лемматизация"/);
+  assert.match(css, /\.queryGrid\s*\{[^}]*align-items:\s*start/);
+  assert.match(page, /следующее поле покажет только её регионы/);
+  assert.match(page, /Выберите город, регион или всю страну из подсказок XMLRiver/);
+  assert.match(page, /nesting\.mergeable !== true/);
+  assert.match(page, /nesting\.ownMergeParentComplete !== true/);
+  assert.match(page, /nestedChildren/);
+  assert.doesNotMatch(page, /ngramNestingNote|частично внутри|все найденные вхождения внутри|Вложенность:/);
+  assert.match(page, /https:\/\/t\.me\/closedchannelkotenkov/);
+  assert.match(page, /<Link className=\{styles\.brand\} href="\/"/);
+  assert.match(page, /XMLRiver — обязательный источник выдачи/);
+  assert.match(page, /https:\/\/xmlriver\.com\//);
+  assert.match(page, /serverConfigured === false && <a href="https:\/\/xmlriver\.com\/"[^>]*>Подключить XMLRiver ↗<\/a>/);
+  assert.match(page, /Firecrawl — дополнительный fallback/);
+  assert.match(page, /https:\/\/www\.firecrawl\.dev\//);
+  assert.match(page, /firecrawlConfigured === false && <a href="https:\/\/www\.firecrawl\.dev\/"[^>]*>Подключить Firecrawl ↗<\/a>/);
+  assert.match(page, /fallback включается автоматически/);
+  assert.doesNotMatch(page, /useFirecrawl|Использовать Firecrawl для недоступных URL/);
+  assert.doesNotMatch(core, /payload\.useFirecrawl/);
+  assert.doesNotMatch(page, /fetch\("\/api\/analyze-triplets"|id="triplets"|Семантические связи/);
+  assert.doesNotMatch(page, /\["Все", "Добавить", "Норма", "Снизить"\]/);
   assert.match(page, /<summary>Методика расчёта<\/summary>/);
   assert.match(page, /Object\.values\(result\.methodology \|\| \{\}\)/);
   assert.match(page, /typeof value === "string"/);
@@ -135,6 +200,25 @@ test("keeps large analytical tables paginated and presents the three public docu
   assert.match(cloudLayout, /return 8 \+ Math\.pow\(ratio, 1\.05\) \* 26/);
   assert.doesNotMatch(page, /lengthScale/);
   assert.doesNotMatch(cloudLayout, /lengthScale/);
+});
+
+test("landing demo removes the main-conclusion callout and makes every table column sortable", async () => {
+  const landing = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+
+  assert.doesNotMatch(landing, /Главный вывод/);
+  assert.equal((landing.match(/<table>/g) ?? []).length, 3, "landing must keep its three data tables");
+  assert.equal(
+    (landing.match(/<LandingSortableHeader\s+label=/g) ?? []).length,
+    19,
+    "all 19 columns across the lemma, N-gram and volume tables must be clickable",
+  );
+  assert.match(landing, /function LandingSortableHeader/);
+  assert.match(landing, /aria-sort=\{ariaSort\}/);
+  assert.match(landing, /sortRows\(rows, lemmaSort/);
+  assert.match(landing, /sortRows\(ngrams, ngramSort/);
+  assert.match(landing, /sortRows\(wordCounts, volumeSort/);
+  assert.match(landing, /sortedNgrams\.map/);
+  assert.match(landing, /sortedWordCounts\.map/);
 });
 
 test("competitor benchmarks do not change when only the own page changes", async () => {

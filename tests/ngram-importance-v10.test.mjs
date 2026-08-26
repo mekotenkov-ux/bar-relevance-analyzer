@@ -259,6 +259,7 @@ test("an exact input N-gram with DF=0 and own=0 stays visible and outranks irrel
   const irrelevant = rowBySurface(report, "московская бизнес");
   assert.ok(exact && irrelevant, "both the zero-DF input phrase and comparison phrase must remain visible");
   assert.equal(exact.keywordHit, true);
+  assert.equal(exact.keyMatch, "exact", "morphologically normalized query phrases must remain marked as exact key hits");
   assert.equal(exact.sites, 0);
   assert.equal(exact.df, 0);
   assert.equal(exact.ownCount, 0);

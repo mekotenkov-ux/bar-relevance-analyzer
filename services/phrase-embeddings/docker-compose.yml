@@ -1,0 +1,17 @@
+services:
+  phrase-embeddings:
+    build:
+      context: ../..
+      dockerfile: services/phrase-embeddings/Dockerfile
+    ports:
+      - "127.0.0.1:8093:8093"
+    environment:
+      PHRASE_EMBEDDINGS_THREADS: "8"
+      PHRASE_EMBEDDINGS_BATCH_SIZE: "16"
+      PHRASE_EMBEDDINGS_MAX_PAIRS: "1000000"
+    volumes:
+      - phrase-embedding-models:/models
+    restart: unless-stopped
+
+volumes:
+  phrase-embedding-models:

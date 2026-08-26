@@ -67,7 +67,6 @@ async function cloudFixture() {
           queries: ["cloud analysis"],
           serpQuery: "cloud analysis",
           language: "en",
-          useFirecrawl: false,
           competitors,
           ownPage: { name: "Cloud own", url: "https://cloud-own.example.test/page" },
           search: { engine: "google", region: "us", device: "desktop", found: competitors.length },

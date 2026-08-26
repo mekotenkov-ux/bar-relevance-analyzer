@@ -2,15 +2,14 @@
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
+import Link from "next/link";
 import {
-  DEFAULT_STOP_PHRASES,
-  DEFAULT_STOP_PHRASES_TEXT,
-  DEFAULT_STOP_WORDS,
-  DEFAULT_STOP_WORDS_TEXT,
-  OPTIONAL_WEB_STOP_PHRASES,
-  OPTIONAL_WEB_STOP_WORDS,
+  stopTermPresetFor,
+  stopTermPresetText,
 } from "@/lib/default-stop-terms";
 import { CLOUD_LAYOUT_HEIGHT, CLOUD_LAYOUT_WIDTH, packCloudWords } from "@/lib/cloud-layout";
+import { LANGUAGE_OPTIONS, languageCapability } from "@/lib/language-support";
+import type { XmlRiverRegion } from "@/lib/xmlriver-regions";
 import styles from "./analyzer.module.css";
 
 type InputMode = "url" | "text";
@@ -19,6 +18,27 @@ type Device = "desktop" | "tablet" | "mobile";
 type StatusValue = "Добавить" | "Норма" | "Снизить";
 type ZoneKey = "all" | "title" | "h1" | "text" | "headings" | "anchors";
 type PageDraft = { name: string; mode: InputMode; url: string; text: string };
+type NgramNestingParent = { key: string; phrase: string; occurrences: number; sites: number; share: number };
+type NgramNesting = {
+  classification: "independent" | "partially_nested" | "fully_nested" | "insufficient_evidence";
+  evidenceComplete: boolean;
+  occurrences: number;
+  standaloneOccurrences: number;
+  nestedOccurrences: number;
+  nestedShare: number;
+  ownClassification?: "independent" | "partially_nested" | "fully_nested" | "insufficient_evidence";
+  ownEvidenceComplete?: boolean;
+  ownOccurrences?: number;
+  ownStandaloneOccurrences?: number;
+  ownNestedOccurrences?: number;
+  ownMergeParentOccurrences?: number;
+  ownMergeParentShare?: number;
+  ownMergeParentComplete?: boolean;
+  mergeable?: boolean;
+  mergeParentKey?: string;
+  mergeParentPhrase?: string;
+  parents: NgramNestingParent[];
+};
 type ZoneMetrics = {
   available: boolean;
   sites: number;
@@ -28,6 +48,7 @@ type ZoneMetrics = {
   q75Count: number;
   importance: number;
   status: StatusValue;
+  nesting?: NgramNesting;
 };
 
 type SemanticRow = {
@@ -60,6 +81,10 @@ type NgramRow = SemanticRow & {
   keySimilarity: number;
   priority: number;
   bestKeyword: string;
+  keyMatch?: "exact" | "possible" | "none";
+  isExactKeyword?: boolean;
+  nesting?: NgramNesting;
+  nestedChildren?: Array<{ key: string; phrase: string; occurrences: number }>;
 };
 type CloudWord = { key: string; word: string; count: number; weight: number; frequency: number; sites: number };
 type ProfileLemma = {
@@ -98,59 +123,6 @@ type DocumentRow = {
   weightedDensity: number;
   ours: boolean;
 };
-type TripletCandidate = {
-  id: string;
-  key: string;
-  label: string;
-  forms: string[];
-  importance: number;
-  sites: number;
-};
-type TripletDocument = { id: string; name: string; url: string; ours: boolean };
-type TripletExample = { sentenceId: string; text: string; documentId: string; documentName: string; ours: boolean };
-type TripletEdge = {
-  id: string;
-  sourceId: string;
-  sourceLabel: string;
-  predicate: string;
-  targetId: string;
-  targetLabel: string;
-  negated: boolean;
-  occurrences: number;
-  documentCount: number;
-  documents: TripletDocument[];
-  examples: TripletExample[];
-};
-type TripletAnalysisResult = {
-  status: "disabled" | "unavailable" | "empty" | "ready";
-  enabled: boolean;
-  threshold: number;
-  candidates: TripletCandidate[];
-  edges: TripletEdge[];
-  meta?: {
-    candidateCount?: number;
-    totalCandidateCount?: number;
-    processedCandidateCount?: number;
-    evidenceSentenceCount?: number;
-    processedSentenceCount?: number;
-    uniqueSentenceCount?: number;
-    totalSentenceCount?: number;
-    corpusSentenceCount?: number;
-    documentCount?: number;
-    inputTokens?: number;
-    truncated?: boolean;
-    maxCandidates?: number;
-    maxSentences?: number;
-    maxInputTokens?: number;
-    minSupport?: number;
-    min_support?: number;
-    relationCount?: number;
-    relationLimit?: number;
-  };
-  model?: string;
-  usage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number };
-  message?: string;
-};
 type AnalysisResult = {
   meta: {
     query: string;
@@ -165,7 +137,17 @@ type AnalysisResult = {
     device?: Device;
     language: string;
     languageLabel: string;
+    morphologyMode?: "lemmatization" | "stemming" | "tokens";
+    morphologyLabel?: string;
+    builtInStopwords?: boolean;
     confidence: "high" | "medium" | "low";
+    phraseSimilarityMethod?: string;
+    phraseSimilarityEngine?: "e5" | "local";
+    phraseSimilarityModel?: string;
+    phraseSimilarityRevision?: string;
+    phraseSimilarityCached?: boolean;
+    phraseSimilarityCoverage?: number;
+    phraseSimilarityError?: string;
     snapshotId: string;
     stopWords?: string[];
     stopPhrases?: string[];
@@ -199,14 +181,27 @@ type AnalysisResult = {
   snapshot: unknown;
   methodology: Record<string, string | number>;
   filters?: { stopWords?: string[]; stopPhrases?: string[] };
-  triplets?: TripletAnalysisResult;
 };
 type SearchResponse = {
   competitors: Array<{ position: number; name: string; title: string; url: string; snippet: string }>;
   credentialSource: "server" | "browser";
+  region?: (XmlRiverRegion & { known: boolean }) | null;
   error?: string;
 };
-type TripletResponse = { triplets?: TripletAnalysisResult; error?: string };
+type RegionOption = {
+  id: string;
+  label: string;
+  name: string;
+  matchLabels: string[];
+  countryCode: string;
+  kind: "country" | "region" | "city";
+  engine: SearchEngine;
+};
+type SortDirection = "asc" | "desc";
+type TermSortKey = "term" | "sites" | "ownCount" | "medianCount" | "importance" | "status";
+type NgramSortKey = "phrase" | "keyMark" | "sites" | "ownCount" | "medianCount" | "importance" | "status";
+type DocumentSortKey = "position" | "name" | "keyTfidfScore" | "weightedCoverage" | "weightedDensity" | "words";
+type SortState<Key extends string> = { key: Key; direction: SortDirection };
 
 const XMLRIVER_STORAGE_KEY = "bar:xmlriver:credentials:v1";
 const REPORT_STORAGE_KEY = "bar:last-report:v10";
@@ -214,26 +209,26 @@ const LEGACY_REPORT_STORAGE_KEY = "bar:last-report:v9";
 const TERM_PAGE_SIZE = 20;
 const NGRAM_PAGE_SIZE = 15;
 const CHART_PAGE_SIZE = 12;
-const TRIPLET_EDGE_PAGE_SIZE = 30;
-const EMPTY_TRIPLET_CANDIDATES: TripletCandidate[] = [];
-const EMPTY_TRIPLET_EDGES: TripletEdge[] = [];
 const number = new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 1 });
 const integer = new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 0 });
+const INITIAL_STOP_TERMS = stopTermPresetText("ru");
 
-function mergeStopTerms(...groups: ReadonlyArray<readonly string[]>) {
-  const seen = new Set<string>();
-  return groups.flatMap((group) => group.filter((item) => {
-    const key = item.normalize("NFKC").trim().toLocaleLowerCase("ru-RU");
-    if (!key || seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  }));
-}
-
-const WEB_STOP_WORDS = mergeStopTerms(DEFAULT_STOP_WORDS, OPTIONAL_WEB_STOP_WORDS);
-const WEB_STOP_PHRASES = mergeStopTerms(DEFAULT_STOP_PHRASES, OPTIONAL_WEB_STOP_PHRASES);
-const WEB_STOP_WORDS_TEXT = WEB_STOP_WORDS.join("\n");
-const WEB_STOP_PHRASES_TEXT = WEB_STOP_PHRASES.join("\n");
+const COLUMN_TOOLTIPS: Record<string, string> = {
+  "Лемма / формы": "Начальная форма слова и найденные в корпусе словоформы.",
+  "Фраза / варианты": "N-грамма и варианты её написания, найденные на принятых страницах.",
+  "Попадание в ключ": "«Ключ» — точное морфологическое совпадение фразы с ключом. «Возможно ключ» — высокая смысловая близость к одному из ключей.",
+  "Документы": "Сколько принятых страниц конкурентов содержит терм в выбранной зоне.",
+  "У нас": "Целое число вхождений терма на вашей странице в выбранной зоне.",
+  "Ориентир": "Ориентир по конкурентам, нормированный под объём вашей страницы или выбранной зоны. Ниже показан диапазон Q25–Q75.",
+  "Важность": "Нормированная оценка 0–100: чем она выше, тем полезнее проверить терм в первую очередь.",
+  "Действие": "Рекомендация по сравнению вашей страницы с конкурентным диапазоном.",
+  "SERP": "Позиция страницы в полученной поисковой выдаче.",
+  "Документ": "Принятая страница конкурента или ваша анализируемая страница.",
+  "TF-IDF ключей": "Насколько заметны введённые ключи в документе по TF-IDF.",
+  "Взвешенный охват": "Доля важных лемм и фраз, которые присутствуют в документе хотя бы один раз.",
+  "Взвешенная плотность": "Насколько документ выполняет ориентир по числу вхождений каждого важного терма.",
+  "Слов": "Количество слов в видимом содержимом документа.",
+};
 
 const ZONES: Array<{ key: ZoneKey; label: string; hint: string }> = [
   { key: "all", label: "Общее", hint: "Весь видимый документ" },
@@ -258,25 +253,14 @@ type StoredReport = {
   report: AnalysisResult;
   stopWords: string;
   stopPhrases: string;
-  tripletsEnabled?: boolean;
 };
-
-const LANGUAGES = [
-  ["ar", "العربية"], ["hy", "Հայերեն"], ["eu", "Euskara"], ["bg", "Български"],
-  ["ca", "Català"], ["zh", "中文"], ["hr", "Hrvatski"], ["cs", "Čeština"],
-  ["da", "Dansk"], ["nl", "Nederlands"], ["en", "English"], ["et", "Eesti"],
-  ["fi", "Suomi"], ["fr", "Français"], ["de", "Deutsch"], ["el", "Ελληνικά"],
-  ["he", "עברית"], ["hi", "हिन्दी"], ["hu", "Magyar"], ["id", "Bahasa Indonesia"],
-  ["ga", "Gaeilge"], ["it", "Italiano"], ["ja", "日本語"], ["ko", "한국어"],
-  ["lv", "Latviešu"], ["lt", "Lietuvių"], ["no", "Norsk"], ["fa", "فارسی"],
-  ["pl", "Polski"], ["pt", "Português"], ["ro", "Română"], ["ru", "Русский"],
-  ["sr", "Српски"], ["sk", "Slovenčina"], ["sl", "Slovenščina"], ["es", "Español"],
-  ["sw", "Kiswahili"], ["sv", "Svenska"], ["ta", "தமிழ்"], ["th", "ไทย"],
-  ["tr", "Türkçe"], ["uk", "Українська"], ["ur", "اردو"], ["vi", "Tiếng Việt"],
-] as const;
 
 function percent(value: number) { return `${number.format(value)}%`; }
 function frequency(value: number) { return number.format(value); }
+function average(values: readonly number[]) {
+  if (!values.length) return 0;
+  return values.reduce((sum, value) => sum + (Number.isFinite(value) ? value : 0), 0) / values.length;
+}
 function hostLabel(value: string) {
   try { return new URL(value).hostname.replace(/^www\./, ""); }
   catch { return value || "—"; }
@@ -300,31 +284,97 @@ function parseStops(value: string) {
     return true;
   });
 }
-function saveReport(report: AnalysisResult, stopWords: string, stopPhrases: string, tripletsEnabled = false) {
-  const stored: StoredReport = { version: 10, report, stopWords, stopPhrases, tripletsEnabled };
+function saveReport(report: AnalysisResult, stopWords: string, stopPhrases: string) {
+  const stored: StoredReport = { version: 10, report, stopWords, stopPhrases };
   try { sessionStorage.setItem(REPORT_STORAGE_KEY, JSON.stringify(stored)); }
   catch { /* A large corpus can exceed the browser session quota; the live report remains usable. */ }
 }
 function countUp(value: number | undefined) {
   return Math.ceil(Math.max(0, Number.isFinite(value) ? Number(value) : 0));
 }
-function largestCount(...values: unknown[]) {
-  return values.reduce<number>((largest, value) => {
-    const numeric = Number(value);
-    return Number.isFinite(numeric) ? Math.max(largest, Math.trunc(numeric)) : largest;
-  }, 0);
-}
 function isCurrentSnapshot(value: unknown) {
   return Boolean(value && typeof value === "object" && Number((value as { version?: unknown }).version) === 5);
 }
-function pluralRu(value: number, one: string, few: string, many: string) {
-  const count = Math.abs(Math.trunc(value));
-  const lastTwo = count % 100;
-  const last = count % 10;
-  if (lastTwo >= 11 && lastTwo <= 14) return many;
-  if (last === 1) return one;
-  if (last >= 2 && last <= 4) return few;
-  return many;
+
+function normalizeKeyPhrase(value: string) {
+  return value.normalize("NFKC").toLocaleLowerCase("ru-RU").replaceAll("ё", "е").replace(/[^\p{L}\p{N}]+/gu, " ").trim().replace(/\s+/gu, " ");
+}
+
+function ngramKeyMark(row: NgramRow, queries: readonly string[]) {
+  if (row.keywordHit === true || row.keyMatch === "exact" || row.isExactKeyword === true) return "Ключ" as const;
+  const normalizedQueries = new Set(queries.map(normalizeKeyPhrase).filter(Boolean));
+  const exact = [row.phrase, ...row.forms].some((value) => normalizedQueries.has(normalizeKeyPhrase(value)));
+  if (exact) return "Ключ" as const;
+  if (row.keyMatch === "possible" || row.keySimilarity > 0.8) return "Возможно ключ" as const;
+  return "" as const;
+}
+
+function statusRank(value: StatusValue) {
+  return value === "Добавить" ? 0 : value === "Снизить" ? 1 : 2;
+}
+
+function compareValues(left: string | number, right: string | number) {
+  if (typeof left === "number" && typeof right === "number") return left - right;
+  return String(left).localeCompare(String(right), "ru", { numeric: true, sensitivity: "base" });
+}
+
+function stableSort<Row>(rows: readonly Row[], direction: SortDirection, value: (row: Row) => string | number, tieBreaker: (row: Row) => string) {
+  const multiplier = direction === "asc" ? 1 : -1;
+  return rows.map((row, index) => ({ row, index })).sort((left, right) => {
+    const primary = compareValues(value(left.row), value(right.row)) * multiplier;
+    if (primary) return primary;
+    const tie = tieBreaker(left.row).localeCompare(tieBreaker(right.row), "ru", { numeric: true, sensitivity: "base" });
+    return tie || left.index - right.index;
+  }).map(({ row }) => row);
+}
+
+function nextSort<Key extends string>(current: SortState<Key>, key: Key, numeric = false): SortState<Key> {
+  if (current.key === key) return { key, direction: current.direction === "asc" ? "desc" : "asc" };
+  return { key, direction: numeric ? "desc" : "asc" };
+}
+
+function normalizeRegionOptions(value: unknown, defaultEngine: SearchEngine = "yandex"): RegionOption[] {
+  const result: RegionOption[] = [];
+  const seen = new Set<string>();
+  const add = (item: unknown, fallbackEngine: SearchEngine = defaultEngine) => {
+    if (!item || typeof item !== "object") return;
+    const source = item as Record<string, unknown>;
+    const rawId = source.code ?? source.id ?? source.value ?? source.regionId ?? source.region_id;
+    const id = typeof rawId === "string" || typeof rawId === "number" ? String(rawId).trim() : "";
+    const rawEngine = source.engine;
+    const optionEngine: SearchEngine = rawEngine === "google" ? "google" : rawEngine === "yandex" ? "yandex" : fallbackEngine;
+    const rawLabel = source.label ?? source.name ?? source.title ?? source.text;
+    const plainLabel = typeof rawLabel === "string" ? rawLabel.trim() : "";
+    const canonicalName = typeof source.canonicalName === "string"
+      ? source.canonicalName.split(",").map((part) => part.trim()).filter(Boolean).join(", ") : "";
+    const rawDisplayLabel = typeof source.displayLabel === "string" ? source.displayLabel.trim() : "";
+    const baseLabel = canonicalName || plainLabel;
+    const label = rawDisplayLabel || (baseLabel && id ? `${baseLabel} — ${id}` : "");
+    const key = `${optionEngine}:${id}`;
+    if (!id || !label || seen.has(key)) return;
+    seen.add(key);
+    const countryCode = typeof source.countryCode === "string" ? source.countryCode.trim().toUpperCase() : "";
+    const kind = source.kind === "country" ? "country" : source.kind === "region" ? "region" : "city";
+    result.push({ id, label, name: plainLabel || canonicalName || label, matchLabels: [plainLabel, canonicalName].filter(Boolean), countryCode, kind, engine: optionEngine });
+  };
+  if (Array.isArray(value)) value.forEach((item) => add(item));
+  else if (value && typeof value === "object") {
+    const source = value as Record<string, unknown>;
+    for (const optionEngine of ["yandex", "google"] as const) {
+      const items = source[optionEngine];
+      if (Array.isArray(items)) items.forEach((item) => add(item, optionEngine));
+    }
+  }
+  return result.sort((left, right) => left.label.localeCompare(right.label, "ru", { numeric: true, sensitivity: "base" }) || left.id.localeCompare(right.id));
+}
+
+function terminalRegionCode(value: string) {
+  const match = value.trim().match(/(?:^|[\s([—–-])([1-9]\d{0,11})\s*[)\]]?$/u);
+  return match?.[1] ?? "";
+}
+
+function normalizedRegionLabel(value: string) {
+  return value.normalize("NFKC").trim().toLocaleLowerCase("ru-RU").replace(/ё/g, "е").replace(/\s+/g, " ");
 }
 function termsForZone(result: AnalysisResult | null, zone: ZoneKey) {
   if (!result) return [];
@@ -354,8 +404,9 @@ function termsForZone(result: AnalysisResult | null, zone: ZoneKey) {
 }
 function ngramsForZone(result: AnalysisResult | null, zone: ZoneKey) {
   if (!result || !Array.isArray(result.ngrams)) return [];
+  let rows: NgramRow[];
   if (result.ngrams.some((row) => row.zones?.[zone])) {
-    return result.ngrams.flatMap((row) => {
+    rows = result.ngrams.flatMap((row) => {
       const metrics = row.zones?.[zone];
       if (!metrics?.available || (metrics.sites <= 0 && metrics.ownCount <= 0 && !(zone === "all" && row.keywordHit))) return [];
       return [{
@@ -367,10 +418,80 @@ function ngramsForZone(result: AnalysisResult | null, zone: ZoneKey) {
         q75: metrics.q75Count,
         importance: metrics.importance,
         status: metrics.status,
+        nesting: metrics.nesting ?? row.nesting,
       }];
-    }).sort((left, right) => right.importance - left.importance || (right.priority ?? 0) - (left.priority ?? 0) || left.phrase.localeCompare(right.phrase));
+    });
+  } else rows = zone === "all" ? result.ngrams : [];
+
+  const byKey = new Map(rows.map((row) => [row.key, row]));
+  const childrenByParent = new Map<string, Array<{ key: string; phrase: string; occurrences: number }>>();
+  const hidden = new Set<string>();
+  for (const row of rows) {
+    const nesting = row.nesting;
+    if (row.keywordHit || !nesting?.evidenceComplete || nesting.classification !== "fully_nested" || nesting.mergeable !== true || !nesting.mergeParentKey) continue;
+    // Never hide a short phrase unless every occurrence on our page belongs to
+    // the same concrete parent selected from competitor evidence.
+    if (nesting.ownMergeParentComplete !== true) continue;
+    const parent = byKey.get(nesting.mergeParentKey);
+    if (!parent) continue;
+    hidden.add(row.key);
+    const children = childrenByParent.get(parent.key) ?? [];
+    children.push({ key: row.key, phrase: row.phrase, occurrences: countUp(nesting.occurrences || row.sites) });
+    childrenByParent.set(parent.key, children);
   }
-  return zone === "all" ? result.ngrams : [];
+  return rows.filter((row) => !hidden.has(row.key)).map((row) => ({
+    ...row,
+    nestedChildren: childrenByParent.get(row.key)?.sort((left, right) => right.occurrences - left.occurrences || left.phrase.localeCompare(right.phrase, "ru")),
+  })).sort((left, right) => right.importance - left.importance || (right.priority ?? 0) - (left.priority ?? 0) || left.phrase.localeCompare(right.phrase));
+}
+
+function escapeMarkdown(value: string) {
+  return value.replace(/([\\`*_{}[\]()#+.!|>-])/gu, "\\$1");
+}
+
+function adjustmentAction(row: SemanticRow) {
+  const own = countUp(row.ownCount);
+  const lower = countUp(row.q25);
+  const upper = Math.max(lower, countUp(row.q75));
+  if (own >= lower && own <= upper) return "";
+  if (own < lower) return "Добавить" as const;
+  if (own > upper) return "Снизить" as const;
+  return "";
+}
+
+function buildPageBrief(result: AnalysisResult) {
+  const lines = [`# ТЗ для страницы: ${result.meta.serpQuery}`, "", "Работайте по зонам: сначала исправляйте фразы, затем отдельные леммы."];
+  let taskCount = 0;
+  for (const zone of ZONES) {
+    const phraseRows = ngramsForZone(result, zone.key)
+      .filter((row) => adjustmentAction(row))
+      .sort((left, right) => right.importance - left.importance || left.phrase.localeCompare(right.phrase, "ru"));
+    const lemmaRows = termsForZone(result, zone.key)
+      .filter((row) => adjustmentAction(row))
+      .sort((left, right) => right.importance - left.importance || left.term.localeCompare(right.term, "ru"));
+    if (!phraseRows.length && !lemmaRows.length) continue;
+    lines.push("", `## ${zone.label} — ${zone.hint}`);
+    if (phraseRows.length) {
+      lines.push("", "### Фразы");
+      for (const row of phraseRows) {
+        const action = adjustmentAction(row);
+        const verb = action === "Добавить" ? "Добавить" : "Снизить количество вхождений";
+        lines.push(`- [ ] ${verb} фразы **${escapeMarkdown(row.phrase)}**: сейчас ${countUp(row.ownCount)}, ориентир ${countUp(row.medianCount)} (диапазон ${countUp(row.q25)}–${countUp(row.q75)}).`);
+        taskCount += 1;
+      }
+    }
+    if (lemmaRows.length) {
+      lines.push("", "### Леммы");
+      for (const row of lemmaRows) {
+        const action = adjustmentAction(row);
+        const verb = action === "Добавить" ? "Добавить" : "Снизить количество вхождений";
+        lines.push(`- [ ] ${verb} леммы **${escapeMarkdown(row.term)}**: сейчас ${countUp(row.ownCount)}, ориентир ${countUp(row.medianCount)} (диапазон ${countUp(row.q25)}–${countUp(row.q75)}).`);
+        taskCount += 1;
+      }
+    }
+  }
+  if (!taskCount) lines.push("", "Страница уже находится в рекомендуемых диапазонах. Обязательных правок нет.");
+  return lines.join("\n");
 }
 
 function profileLemmaCount(profile: ComparisonProfile | undefined, row: TermRow, zone: ZoneKey) {
@@ -388,8 +509,8 @@ function profileLemmaCount(profile: ComparisonProfile | undefined, row: TermRow,
 function PageEditor({ draft, onChange }: { draft: PageDraft; onChange: (draft: PageDraft) => void }) {
   return <div className={styles.pageEditor}>
     <div className={styles.modeSwitch} aria-label="Способ добавления своей страницы">
-      <button type="button" className={draft.mode === "url" ? styles.activeMode : ""} onClick={() => onChange({ ...draft, mode: "url" })}>По URL</button>
-      <button type="button" className={draft.mode === "text" ? styles.activeMode : ""} onClick={() => onChange({ ...draft, mode: "text" })}>Вставить текст</button>
+      <button type="button" title="Загрузить и разобрать страницу по публичному URL" className={draft.mode === "url" ? styles.activeMode : ""} onClick={() => onChange({ ...draft, mode: "url" })}>По URL</button>
+      <button type="button" title="Проанализировать вставленный текст без загрузки страницы" className={draft.mode === "text" ? styles.activeMode : ""} onClick={() => onChange({ ...draft, mode: "text" })}>Вставить текст</button>
     </div>
     {draft.mode === "url" ? <label className={styles.field}>
       <span>URL вашей страницы</span>
@@ -404,25 +525,33 @@ function PageEditor({ draft, onChange }: { draft: PageDraft; onChange: (draft: P
 }
 
 function StopFields({
+  language,
   stopWords,
   stopPhrases,
   setStopWords,
   setStopPhrases,
   compact = false,
 }: {
+  language: string;
   stopWords: string;
   stopPhrases: string;
   setStopWords: (value: string) => void;
   setStopPhrases: (value: string) => void;
   compact?: boolean;
 }) {
+  const preset = stopTermPresetFor(language);
+  const basePreset = stopTermPresetText(language);
+  const webPreset = stopTermPresetText(language, true);
+  const presetCount = preset.words.length + preset.phrases.length;
+  const webPresetCount = preset.optionalWebWords.length + preset.optionalWebPhrases.length;
+  const capability = languageCapability(language);
   const applyDefaultStops = () => {
-    setStopWords(DEFAULT_STOP_WORDS_TEXT);
-    setStopPhrases(DEFAULT_STOP_PHRASES_TEXT);
+    setStopWords(basePreset.words);
+    setStopPhrases(basePreset.phrases);
   };
   const applyWebStops = () => {
-    setStopWords(WEB_STOP_WORDS_TEXT);
-    setStopPhrases(WEB_STOP_PHRASES_TEXT);
+    setStopWords(webPreset.words);
+    setStopPhrases(webPreset.phrases);
   };
   const clearStops = () => {
     setStopWords("");
@@ -432,24 +561,26 @@ function StopFields({
   return <div className={`${styles.stopGrid} ${compact ? styles.stopGridCompact : ""}`}>
     <div className={styles.stopPresetBar}>
       <div className={styles.stopPresetCopy}>
-        <strong>Безопасный редактируемый стоп-лист</strong>
-        <span>Базовый набор содержит только служебную лексику. «Веб-шум» дополнительно включает CTA и юридические шаблоны — применяйте его осознанно, если они не относятся к теме страницы.</span>
+        <strong>Дополнительный стоп-лист · {preset.label}</strong>
+        <span>{language === "auto"
+          ? "Встроенные стоп-слова будут выбраны автоматически после определения языка. Здесь можно добавить свои исключения."
+          : `${capability?.stopwordLabel ?? "Пользовательские стоп-слова"} применяются автоматически. Поля ниже — редактируемые дополнения для ${preset.label}.`}</span>
       </div>
       <div className={styles.stopPresetActions} role="group" aria-label="Управление стоп-листом">
-        <button type="button" onClick={applyDefaultStops} aria-label="Восстановить безопасный базовый набор стоп-термов">Базовый <span>{DEFAULT_STOP_WORDS.length + DEFAULT_STOP_PHRASES.length}</span></button>
-        <button type="button" onClick={applyWebStops} aria-label="Добавить к базовому набору CTA и юридический веб-шум">+ Веб-шум <span>+{OPTIONAL_WEB_STOP_WORDS.length + OPTIONAL_WEB_STOP_PHRASES.length}</span></button>
-        <button type="button" onClick={clearStops}>Очистить</button>
+        <button type="button" title="Восстановить базовый набор дополнительных стоп-термов для выбранного языка" onClick={applyDefaultStops} disabled={!presetCount} aria-label={`Восстановить базовый дополнительный набор для ${preset.label}`}>Базовый <span>{presetCount}</span></button>
+        <button type="button" title="Добавить типовой CTA, юридические фразы и другой веб-шум" onClick={applyWebStops} disabled={!webPresetCount} aria-label={`Добавить CTA и юридический веб-шум для ${preset.label}`}>+ Веб-шум <span>+{webPresetCount}</span></button>
+        <button type="button" title="Очистить только дополнительные стоп-слова и стоп-фразы" onClick={clearStops}>Очистить</button>
       </div>
     </div>
     <label className={styles.field}>
       <span>Стоп-слова</span>
       <textarea className={`${styles.textarea} ${styles.stopTextarea}`} value={stopWords} onChange={(event) => setStopWords(event.target.value)} placeholder={'например\nсайт\nкомпания'} />
-      <small>По одному с новой строки или через запятую. Исключается указанное слово и все его лемматизированные формы; фразы с ним тоже не попадут в отчёт.</small>
+      <small>{language === "auto" ? "Дополнительные слова нормализуются после автоопределения — по фактическому режиму выбранного языка." : capability?.morphology === "lemmatization" ? "Слово приводится к нормальной форме: его словоформы и фразы с ними исключаются автоматически." : capability?.morphology === "tokens" ? "В этом языке словоформы не склеиваются: добавьте каждое нужное окончание отдельно. Фразы с таким словом тоже исключаются." : "По одному с новой строки или через запятую. Snowball исключает словоформы с тем же стемом; это не словарная лемматизация."}</small>
     </label>
     <label className={styles.field}>
       <span>Стоп-фразы</span>
       <textarea className={`${styles.textarea} ${styles.stopTextarea}`} value={stopPhrases} onChange={(event) => setStopPhrases(event.target.value)} placeholder={'политика конфиденциальности\nоставить заявку'} />
-      <small>По одной фразе с новой строки или через запятую. Совпавшие лемматизированные фразы исключаются из анализа.</small>
+      <small>Фраза совпадает по последовательности {language === "auto" ? "термов, нормализованных после определения языка" : capability?.morphology === "lemmatization" ? "морфологических лемм" : capability?.morphology === "tokens" ? "нормализованных словоформ" : "Snowball-стемов"}; порядок слов сохраняется.</small>
     </label>
   </div>;
 }
@@ -468,14 +599,15 @@ function downloadCsv(name: string, rows: Record<string, unknown>[]) {
 }
 
 function Status({ value }: { value: StatusValue }) {
-  const className = value === "Добавить" ? styles.add : value === "Снизить" ? styles.reduce : styles.normal;
+  if (value === "Норма") return null;
+  const className = value === "Добавить" ? styles.add : styles.reduce;
   return <span className={`${styles.status} ${className}`}><span aria-hidden="true">{value === "Добавить" ? "+" : value === "Снизить" ? "−" : "✓"}</span>{value}</span>;
 }
 function Pagination({ page, pages, total, setPage }: { page: number; pages: number; total: number; setPage: (page: number) => void }) {
   if (!total) return <div className={styles.pagination}><span>Ничего не найдено</span></div>;
   return <div className={styles.pagination}>
     <span>{integer.format(total)} строк · страница {page} из {pages}</span>
-    <div><button type="button" onClick={() => setPage(Math.max(1, page - 1))} disabled={page <= 1} aria-label="Предыдущая страница">←</button><button type="button" onClick={() => setPage(Math.min(pages, page + 1))} disabled={page >= pages} aria-label="Следующая страница">→</button></div>
+    <div><button type="button" title="Перейти на предыдущую страницу таблицы" onClick={() => setPage(Math.max(1, page - 1))} disabled={page <= 1} aria-label="Предыдущая страница">←</button><button type="button" title="Перейти на следующую страницу таблицы" onClick={() => setPage(Math.min(pages, page + 1))} disabled={page >= pages} aria-label="Следующая страница">→</button></div>
   </div>;
 }
 function Cloud({ title, note, words, maxFrequency, own = false }: { title: string; note: string; words: CloudWord[]; maxFrequency: number; own?: boolean }) {
@@ -489,25 +621,50 @@ function Cloud({ title, note, words, maxFrequency, own = false }: { title: strin
     })}{!arranged.length && <p className={styles.empty}>Недостаточно данных</p>}</div>
   </article>;
 }
-function Metric({ label, value, note }: { label: string; value: string; note: string }) { return <div className={styles.metric}><span>{label}</span><strong>{value}</strong><small>{note}</small></div>; }
+function HelpTip({ text }: { text: string }) {
+  return <button className={styles.helpTip} type="button" aria-label={`Подсказка: ${text}`} data-tooltip={text}>?</button>;
+}
+function Metric({ label, value, note, tooltip, benchmark }: { label: string; value: string; note: string; tooltip: string; benchmark?: string }) {
+  return <div className={styles.metric} title={tooltip}>
+    <span className={styles.metricLabel}>{label}<HelpTip text={tooltip} /></span>
+    <strong>{value}{benchmark && <em className={styles.metricBenchmark}>из {benchmark}</em>}</strong>
+    <small>{note}</small>
+  </div>;
+}
 function FilterButtons({ value, onChange }: { value: string; onChange: (value: string) => void }) {
-  return <div className={styles.filters} aria-label="Фильтр по действию">{["Все", "Добавить", "Норма", "Снизить"].map((item) => <button key={item} type="button" className={value === item ? styles.activeFilter : ""} onClick={() => onChange(item)}>{item}</button>)}</div>;
+  return <div className={styles.filters} aria-label="Фильтр по действию">{["Все", "Добавить", "Снизить"].map((item) => <button key={item} type="button" title={item === "Все" ? "Показать все строки" : `Показать только строки с действием «${item}»`} className={value === item ? styles.activeFilter : ""} onClick={() => onChange(item)}>{item}</button>)}</div>;
+}
+
+function SortableHeader<Key extends string>({ label, sortKey, state, onSort, numeric = false, tooltip }: { label: string; sortKey: Key; state: SortState<Key>; onSort: (state: SortState<Key>) => void; numeric?: boolean; tooltip?: string }) {
+  const active = state.key === sortKey;
+  const ariaSort = active ? state.direction === "asc" ? "ascending" : "descending" : "none";
+  const explanation = tooltip ?? COLUMN_TOOLTIPS[label] ?? `Сортировка таблицы по колонке «${label}».`;
+  return <th scope="col" aria-sort={ariaSort}><button className={styles.sortButton} type="button" title={explanation} onClick={() => onSort(nextSort(state, sortKey, numeric))} aria-label={`${label}: ${explanation} ${active ? state.direction === "asc" ? "Сейчас по возрастанию, переключить на убывание." : "Сейчас по убыванию, переключить на возрастание." : "Нажмите, чтобы отсортировать."}`}>{label}<span aria-hidden="true">{active ? state.direction === "asc" ? "↑" : "↓" : "↕"}</span></button></th>;
+}
+
+function DocumentSortableHeader({ label, sortKey, state, onSort, numeric = false, tooltip }: { label: string; sortKey: DocumentSortKey; state: SortState<DocumentSortKey>; onSort: (state: SortState<DocumentSortKey>) => void; numeric?: boolean; tooltip?: string }) {
+  const active = state.key === sortKey;
+  const ariaSort = active ? state.direction === "asc" ? "ascending" : "descending" : "none";
+  const explanation = tooltip ?? COLUMN_TOOLTIPS[label] ?? `Сортировка таблицы по колонке «${label}».`;
+  return <span role="columnheader" aria-sort={ariaSort}><button className={styles.sortButton} type="button" title={explanation} onClick={() => onSort(nextSort(state, sortKey, numeric))} aria-label={`${label}: ${explanation} ${active ? state.direction === "asc" ? "Сейчас по возрастанию, переключить на убывание." : "Сейчас по убыванию, переключить на возрастание." : "Нажмите, чтобы отсортировать."}`}>{label}<span aria-hidden="true">{active ? state.direction === "asc" ? "↑" : "↓" : "↕"}</span></button></span>;
 }
 
 export default function AnalyzerPage() {
   const [serpQuery, setSerpQuery] = useState("");
   const [analysisKeys, setAnalysisKeys] = useState("");
-  const [language, setLanguage] = useState("auto");
+  const [language, setLanguage] = useState("ru");
   const [engine, setEngine] = useState<SearchEngine>("yandex");
-  const [region, setRegion] = useState("213");
+  const [countryCode, setCountryCode] = useState("RU");
+  const [region, setRegion] = useState("Москва, Россия — 213");
   const [device, setDevice] = useState<Device>("desktop");
   const [competitorCount, setCompetitorCount] = useState(10);
-  const [useFirecrawl, setUseFirecrawl] = useState(true);
-  const [stopWords, setStopWords] = useState(DEFAULT_STOP_WORDS_TEXT);
-  const [stopPhrases, setStopPhrases] = useState(DEFAULT_STOP_PHRASES_TEXT);
+  const [stopWords, setStopWords] = useState(INITIAL_STOP_TERMS.words);
+  const [stopPhrases, setStopPhrases] = useState(INITIAL_STOP_TERMS.phrases);
   const [ownPage, setOwnPage] = useState<PageDraft>({ name: "Наша страница", mode: "url", url: "", text: "" });
   const [serverConfigured, setServerConfigured] = useState<boolean | null>(null);
   const [firecrawlConfigured, setFirecrawlConfigured] = useState<boolean | null>(null);
+  const [countryOptions, setCountryOptions] = useState<RegionOption[]>([]);
+  const [regionOptions, setRegionOptions] = useState<RegionOption[]>([]);
   const [xmlUser, setXmlUser] = useState("");
   const [xmlKey, setXmlKey] = useState("");
   const [result, setResult] = useState<AnalysisResult | null>(null);
@@ -525,12 +682,23 @@ export default function AnalyzerPage() {
   const [chartLimit, setChartLimit] = useState(CHART_PAGE_SIZE);
   const [selectedCompetitorId, setSelectedCompetitorId] = useState("");
   const [cloudZone, setCloudZone] = useState<ZoneKey>("all");
-  const [tripletsEnabled, setTripletsEnabled] = useState(false);
-  const [tripletPhase, setTripletPhase] = useState<"idle" | "selecting" | "extracting">("idle");
-  const [tripletError, setTripletError] = useState("");
-  const [tripletSeed, setTripletSeed] = useState("all");
-  const [tripletEdgeLimit, setTripletEdgeLimit] = useState(TRIPLET_EDGE_PAGE_SIZE);
+  const [termSort, setTermSort] = useState<SortState<TermSortKey>>({ key: "importance", direction: "desc" });
+  const [ngramSort, setNgramSort] = useState<SortState<NgramSortKey>>({ key: "importance", direction: "desc" });
+  const [documentSort, setDocumentSort] = useState<SortState<DocumentSortKey>>({ key: "keyTfidfScore", direction: "desc" });
+  const [briefCopied, setBriefCopied] = useState(false);
   const xmlCredentialsLoaded = useRef(false);
+  const stopDrafts = useRef<Record<string, { words: string; phrases: string }>>({
+    ru: INITIAL_STOP_TERMS,
+  });
+
+  const selectLanguage = (nextLanguage: string) => {
+    stopDrafts.current[language] = { words: stopWords, phrases: stopPhrases };
+    const nextStops = stopDrafts.current[nextLanguage] ?? stopTermPresetText(nextLanguage);
+    stopDrafts.current[nextLanguage] = nextStops;
+    setLanguage(nextLanguage);
+    setStopWords(nextStops.words);
+    setStopPhrases(nextStops.phrases);
+  };
 
   useEffect(() => {
     queueMicrotask(() => {
@@ -550,9 +718,9 @@ export default function AnalyzerPage() {
         sessionStorage.removeItem(LEGACY_REPORT_STORAGE_KEY);
         if (report?.meta?.serpQuery && (Array.isArray(report.terms) || Array.isArray(report.lemmas))) {
           setResult(report);
-          setTripletsEnabled(Boolean(stored?.tripletsEnabled ?? report.triplets?.enabled));
           setSerpQuery(report.meta.serpQuery);
           setAnalysisKeys((report.meta.queries || []).join("\n") || report.meta.query);
+          setLanguage(report.meta.language || "auto");
           const restoredStopWords = report.meta.stopWords ?? report.filters?.stopWords;
           const restoredStopPhrases = report.meta.stopPhrases ?? report.filters?.stopPhrases;
           setStopWords(typeof stored?.stopWords === "string" ? stored.stopWords : Array.isArray(restoredStopWords) ? restoredStopWords.join("\n") : "");
@@ -564,8 +732,7 @@ export default function AnalyzerPage() {
     fetch("/api/search-competitors").then((response) => response.json()).then((data: { serverConfigured?: boolean; firecrawlConfigured?: boolean }) => {
       setServerConfigured(Boolean(data.serverConfigured));
       setFirecrawlConfigured(Boolean(data.firecrawlConfigured));
-      if (!data.firecrawlConfigured) setUseFirecrawl(false);
-    }).catch(() => { setServerConfigured(false); setFirecrawlConfigured(false); setUseFirecrawl(false); });
+    }).catch(() => { setServerConfigured(false); setFirecrawlConfigured(false); });
   }, []);
   useEffect(() => {
     if (!xmlCredentialsLoaded.current) return;
@@ -578,78 +745,99 @@ export default function AnalyzerPage() {
     } catch { /* Keep credentials in React state when browser storage is unavailable. */ }
   }, [xmlUser, xmlKey]);
 
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch(`/api/xmlriver-regions?engine=${engine}&countries=1`, { signal: controller.signal })
+      .then((response) => response.ok ? response.json() : Promise.reject(new Error("country lookup unavailable")))
+      .then((data: { countries?: unknown }) => {
+        const options = normalizeRegionOptions(data.countries, engine).filter((option) => option.kind === "country" && option.countryCode);
+        setCountryOptions(options);
+        setCountryCode((current) => (options.find((option) => option.countryCode === current)
+          ?? options.find((option) => option.countryCode === "RU")
+          ?? options[0])?.countryCode ?? current);
+      })
+      .catch((cause: unknown) => {
+        if (!(cause instanceof DOMException && cause.name === "AbortError")) setCountryOptions([]);
+      });
+    return () => controller.abort();
+  }, [engine]);
+
+  useEffect(() => {
+    const selectedCode = terminalRegionCode(region);
+    if (!selectedCode) return;
+    const controller = new AbortController();
+    const params = new URLSearchParams({ engine, resolve: region });
+    fetch(`/api/xmlriver-regions?${params.toString()}`, { signal: controller.signal })
+      .then((response) => response.ok ? response.json() : Promise.reject(new Error("region resolve unavailable")))
+      .then((data: { region?: { countryCode?: unknown } }) => {
+        const resolvedCountry = typeof data.region?.countryCode === "string" ? data.region.countryCode.toUpperCase() : "";
+        if (resolvedCountry) setCountryCode((current) => resolvedCountry === current ? current : resolvedCountry);
+      })
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [engine, region]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      const query = region.trim();
+      const params = new URLSearchParams({ engine, countryCode, limit: "100" });
+      if (query) params.set("q", query);
+      fetch(`/api/xmlriver-regions?${params.toString()}`, { signal: controller.signal })
+        .then((response) => response.ok ? response.json() : Promise.reject(new Error("region lookup unavailable")))
+        .then((data: { regions?: unknown }) => {
+          const options = normalizeRegionOptions(data.regions, engine);
+          setRegionOptions(options);
+          const selectedCode = terminalRegionCode(query);
+          const exactCode = options.find((option) => option.id === query || option.id === selectedCode);
+          const normalizedQuery = normalizedRegionLabel(query);
+          const exactNames = options.filter((option) => option.matchLabels
+            .some((label) => normalizedRegionLabel(label) === normalizedQuery));
+          const canonical = exactCode ?? (exactNames.length === 1 ? exactNames[0] : undefined);
+          if (canonical && canonical.label !== query) setRegion(canonical.label);
+        })
+        .catch((cause: unknown) => { if (!(cause instanceof DOMException && cause.name === "AbortError")) setRegionOptions([]); });
+    }, 180);
+    return () => { window.clearTimeout(timer); controller.abort(); };
+  }, [countryCode, engine, region]);
+
   const comparisonProfiles = Array.isArray(result?.comparisonProfiles)
     ? result.comparisonProfiles.filter((profile) => profile && profile.id && Array.isArray(profile.lemmas) && Array.isArray(profile.cloud))
     : [];
 
   const ownReady = ownPage.mode === "url" ? ownPage.url.trim() : ownPage.text.trim();
   const credentialsReady = serverConfigured === true || Boolean(xmlUser.trim() && xmlKey.trim());
-  const canAnalyze = Boolean(serpQuery.trim() && ownReady && credentialsReady && !loading);
-  const currentKeys = parseKeys(analysisKeys, result?.meta.serpQuery || serpQuery);
+  const canAnalyze = Boolean(serpQuery.trim() && region.trim() && ownReady && credentialsReady && !loading);
+  const currentKeys = useMemo(() => parseKeys(analysisKeys, result?.meta.serpQuery || serpQuery), [analysisKeys, result?.meta.serpQuery, serpQuery]);
   const snapshotIsCurrent = isCurrentSnapshot(result?.snapshot);
   const zoneTerms = useMemo(() => termsForZone(result, activeZone), [result, activeZone]);
   const zoneNgrams = useMemo(() => ngramsForZone(result, ngramZone), [result, ngramZone]);
 
   const visibleTerms = useMemo(() => zoneTerms.filter((row) => `${row.term} ${row.forms.join(" ")}`.toLowerCase().includes(termSearch.toLowerCase())).filter((row) => termFilter === "Все" || row.status === termFilter), [zoneTerms, termFilter, termSearch]);
+  const sortedTerms = useMemo(() => stableSort(visibleTerms, termSort.direction, (row) => {
+    if (termSort.key === "term") return row.term;
+    if (termSort.key === "status") return statusRank(row.status);
+    return row[termSort.key];
+  }, (row) => row.key), [visibleTerms, termSort]);
   const termPages = Math.max(1, Math.ceil(visibleTerms.length / TERM_PAGE_SIZE));
   const safeTermPage = Math.min(termPage, termPages);
-  const pagedTerms = visibleTerms.slice((safeTermPage - 1) * TERM_PAGE_SIZE, safeTermPage * TERM_PAGE_SIZE);
-  const visibleNgrams = useMemo(() => zoneNgrams.filter((row) => `${row.phrase} ${row.forms.join(" ")} ${row.bestKeyword}`.toLowerCase().includes(ngramSearch.toLowerCase())).filter((row) => ngramFilter === "Все" || row.status === ngramFilter), [zoneNgrams, ngramFilter, ngramSearch]);
+  const pagedTerms = sortedTerms.slice((safeTermPage - 1) * TERM_PAGE_SIZE, safeTermPage * TERM_PAGE_SIZE);
+  const visibleNgrams = useMemo(() => zoneNgrams.filter((row) => `${row.phrase} ${row.forms.join(" ")} ${row.bestKeyword} ${(row.nestedChildren ?? []).map((child) => child.phrase).join(" ")}`.toLowerCase().includes(ngramSearch.toLowerCase())).filter((row) => ngramFilter === "Все" || row.status === ngramFilter), [zoneNgrams, ngramFilter, ngramSearch]);
+  const sortedNgrams = useMemo(() => stableSort(visibleNgrams, ngramSort.direction, (row) => {
+    if (ngramSort.key === "phrase") return row.phrase;
+    if (ngramSort.key === "keyMark") return ngramKeyMark(row, currentKeys) === "Ключ" ? 2 : ngramKeyMark(row, currentKeys) === "Возможно ключ" ? 1 : 0;
+    if (ngramSort.key === "status") return statusRank(row.status);
+    return row[ngramSort.key];
+  }, (row) => row.key), [visibleNgrams, ngramSort, currentKeys]);
   const ngramPages = Math.max(1, Math.ceil(visibleNgrams.length / NGRAM_PAGE_SIZE));
   const safeNgramPage = Math.min(ngramPage, ngramPages);
-  const pagedNgrams = visibleNgrams.slice((safeNgramPage - 1) * NGRAM_PAGE_SIZE, safeNgramPage * NGRAM_PAGE_SIZE);
+  const pagedNgrams = sortedNgrams.slice((safeNgramPage - 1) * NGRAM_PAGE_SIZE, safeNgramPage * NGRAM_PAGE_SIZE);
 
   const selectZone = (zone: ZoneKey) => {
     setActiveZone(zone);
     setTermFilter("Все");
     setTermPage(1);
     setChartLimit(CHART_PAGE_SIZE);
-  };
-
-  const buildTriplets = async (baseReport: AnalysisResult | null = result) => {
-    if (!baseReport?.snapshot || tripletPhase !== "idle") return;
-    if (!isCurrentSnapshot(baseReport.snapshot)) {
-      setTripletError("Корпус создан старой версией. Обновите конкурентов перед построением связей.");
-      return;
-    }
-    setTripletsEnabled(true);
-    saveReport(baseReport, stopWords, stopPhrases, true);
-    setTripletPhase("selecting");
-    setTripletError("");
-    setTripletSeed("all");
-    setTripletEdgeLimit(TRIPLET_EDGE_PAGE_SIZE);
-    const phaseTimer = window.setTimeout(() => setTripletPhase("extracting"), 450);
-    try {
-      const response = await fetch("/api/analyze-triplets", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          tripletsEnabled: true,
-          snapshot: baseReport.snapshot,
-          queries: baseReport.meta.queries?.length ? baseReport.meta.queries : [baseReport.meta.query],
-          stopWords: parseStops(stopWords),
-          stopPhrases: parseStops(stopPhrases),
-        }),
-      });
-      const data = await response.json() as TripletResponse;
-      if (!response.ok) throw new Error(data.error || "Не удалось построить семантические связи");
-      if (!data.triplets || !Array.isArray(data.triplets.candidates) || !Array.isArray(data.triplets.edges)) {
-        throw new Error("Сервис связей вернул неполный результат");
-      }
-      const nextReport = { ...baseReport, triplets: data.triplets };
-      setResult(nextReport);
-      saveReport(nextReport, stopWords, stopPhrases, true);
-    } catch (cause) {
-      setTripletError(cause instanceof Error ? cause.message : "Не удалось построить семантические связи");
-    } finally {
-      window.clearTimeout(phaseTimer);
-      setTripletPhase("idle");
-    }
-  };
-
-  const updateTripletsEnabled = (enabled: boolean) => {
-    setTripletsEnabled(enabled);
-    if (result) saveReport(result, stopWords, stopPhrases, enabled);
   };
 
   const submit = async (event: FormEvent) => {
@@ -669,17 +857,16 @@ export default function AnalyzerPage() {
       const analyzeResponse = await fetch("/api/analyze-run", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          serpQuery, queries: parseKeys(analysisKeys, serpQuery), stopWords: parseStops(stopWords), stopPhrases: parseStops(stopPhrases), language, useFirecrawl,
+          serpQuery, queries: parseKeys(analysisKeys, serpQuery), stopWords: parseStops(stopWords), stopPhrases: parseStops(stopPhrases), language,
           ownPage: { name: ownPage.name, url: ownPage.mode === "url" ? ownPage.url : "", text: ownPage.mode === "text" ? ownPage.text : "" },
           competitors: searchData.competitors.map((item) => ({ name: item.name, title: item.title, url: item.url, position: item.position })),
-          search: { engine, region, device, found: searchData.competitors.length },
+          search: { engine, region: searchData.region?.displayLabel || searchData.region?.label || region, device, found: searchData.competitors.length },
         }),
       });
       const data = await analyzeResponse.json() as AnalysisResult & { error?: string };
       if (!analyzeResponse.ok) throw new Error(data.error || "Не удалось выполнить анализ найденных страниц");
-      setResult(data); setAnalysisKeys(data.meta.queries.join("\n")); saveReport(data, stopWords, stopPhrases, tripletsEnabled);
+      setResult(data); setAnalysisKeys(data.meta.queries.join("\n")); saveReport(data, stopWords, stopPhrases);
       requestAnimationFrame(() => document.getElementById("report")?.scrollIntoView({ behavior: "smooth" }));
-      if (tripletsEnabled) void buildTriplets(data);
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Не удалось выполнить анализ"); }
     finally { setLoading(false); }
   };
@@ -694,9 +881,7 @@ export default function AnalyzerPage() {
       });
       const data = await response.json() as AnalysisResult & { error?: string };
       if (!response.ok) throw new Error(data.error || "Не удалось пересчитать отчёт");
-      setResult(data); setAnalysisKeys(data.meta.queries.join("\n")); saveReport(data, stopWords, stopPhrases, tripletsEnabled);
-      setTripletError(""); setTripletSeed("all"); setTripletEdgeLimit(TRIPLET_EDGE_PAGE_SIZE);
-      if (tripletsEnabled) void buildTriplets(data);
+      setResult(data); setAnalysisKeys(data.meta.queries.join("\n")); saveReport(data, stopWords, stopPhrases);
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Не удалось пересчитать отчёт"); }
     finally { setLoading(false); }
   };
@@ -705,10 +890,10 @@ export default function AnalyzerPage() {
     if (result) {
       setSerpQuery(result.meta.serpQuery);
       setAnalysisKeys(result.meta.queries.join("\n"));
-      setLanguage(result.meta.language || "auto");
+      selectLanguage(result.meta.language || "auto");
     }
     setActiveZone("all"); setTermFilter("Все"); setTermPage(1); setChartLimit(CHART_PAGE_SIZE); setNgramZone("all"); setNgramPage(1); setCloudZone("all");
-    setResult(null); setError(""); setTripletError(""); setTripletPhase("idle"); sessionStorage.removeItem(REPORT_STORAGE_KEY); sessionStorage.removeItem(LEGACY_REPORT_STORAGE_KEY);
+    setResult(null); setError(""); sessionStorage.removeItem(REPORT_STORAGE_KEY); sessionStorage.removeItem(LEGACY_REPORT_STORAGE_KEY);
     requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: "smooth" }));
   };
 
@@ -728,45 +913,35 @@ export default function AnalyzerPage() {
   const cloudMax = Math.max(.0001, ...activeCloudFrequencies);
   const cloudZoneHint = CLOUD_ZONES.find((zone) => zone.key === cloudZone)?.hint ?? "Весь видимый документ";
   const wordMax = result ? Math.max(1, result.summary.recommendedMax, ...result.documents.map((item) => item.words)) : 1;
-  const tripletData = result?.triplets;
-  const tripletCandidates = Array.isArray(tripletData?.candidates) ? tripletData.candidates : EMPTY_TRIPLET_CANDIDATES;
-  const tripletEdges = Array.isArray(tripletData?.edges) ? tripletData.edges : EMPTY_TRIPLET_EDGES;
-  const tripletLanguage = result?.meta.language || "ru";
-  const connectedTripletCandidates = useMemo(() => {
-    const candidatesById = new Map(tripletCandidates.map((candidate) => [candidate.id, candidate]));
-    const connected = new Map<string, TripletCandidate>();
-    for (const edge of tripletEdges) {
-      const add = (id: string, label: string) => {
-        if (!id || connected.has(id)) return;
-        connected.set(id, candidatesById.get(id) ?? { id, key: id, label, forms: [label], importance: 0, sites: 0 });
-      };
-      add(edge.sourceId, edge.sourceLabel);
-      add(edge.targetId, edge.targetLabel);
+  const competitorDocuments = result?.documents.filter((document) => !document.ours) ?? [];
+  const competitorMetricAverages = {
+    keyTfidfScore: average(competitorDocuments.map((document) => document.keyTfidfScore)),
+    weightedCoverage: average(competitorDocuments.map((document) => document.weightedCoverage)),
+    weightedDensity: average(competitorDocuments.map((document) => document.weightedDensity)),
+  };
+  const availableRegionOptions = regionOptions.filter((option) => option.engine === engine && option.countryCode === countryCode);
+  const sortedDocuments = useMemo(() => result ? stableSort(result.documents, documentSort.direction, (row) => {
+    if (documentSort.key === "position") return row.ours ? Number.MAX_SAFE_INTEGER : row.position ?? Number.MAX_SAFE_INTEGER - 1;
+    if (documentSort.key === "name") return row.ours ? "Наша страница" : row.title || row.name;
+    return row[documentSort.key];
+  }, (row) => `${row.ours ? "0" : "1"}:${row.position ?? ""}:${row.url}:${row.name}`) : [], [result, documentSort]);
+  const pageBrief = useMemo(() => result ? buildPageBrief(result) : "", [result]);
+
+  const copyPageBrief = async () => {
+    if (!pageBrief) return;
+    try {
+      await navigator.clipboard.writeText(pageBrief);
+      setBriefCopied(true);
+      window.setTimeout(() => setBriefCopied(false), 1800);
+    } catch {
+      setBriefCopied(false);
     }
-    return [...connected.values()].sort((left, right) => left.label.localeCompare(right.label, tripletLanguage));
-  }, [tripletCandidates, tripletEdges, tripletLanguage]);
-  const tripletCandidateCount = largestCount(tripletData?.meta?.totalCandidateCount, tripletData?.meta?.candidateCount, tripletCandidates.length);
-  const tripletProcessedSentenceCount = largestCount(tripletData?.meta?.processedSentenceCount) || largestCount(tripletData?.meta?.evidenceSentenceCount);
-  const tripletCorpusSentenceCount = largestCount(tripletData?.meta?.totalSentenceCount, tripletData?.meta?.corpusSentenceCount, tripletProcessedSentenceCount);
-  const tripletRelationCount = largestCount(tripletData?.meta?.relationCount, tripletEdges.length);
-  const tripletIncompleteCorpus = Boolean(tripletData?.meta?.truncated);
-  const filteredTripletEdges = useMemo(() => tripletSeed === "all"
-    ? tripletEdges
-    : tripletEdges.filter((edge) => edge.sourceId === tripletSeed || edge.targetId === tripletSeed), [tripletEdges, tripletSeed]);
-  const visibleTripletEdges = useMemo(() => filteredTripletEdges.slice(0, tripletEdgeLimit), [filteredTripletEdges, tripletEdgeLimit]);
-  const tripletBusy = tripletPhase !== "idle";
-  const tripletStatusLabel = tripletBusy
-    ? tripletPhase === "selecting" ? "Отбираем предложения" : "Извлекаем связи"
-    : tripletError ? "Ошибка"
-      : tripletData?.status === "ready" ? "Готово"
-        : tripletData?.status === "empty" ? "Связи не найдены"
-          : tripletData?.status === "unavailable" ? "spaCy недоступен"
-            : "Выключено";
+  };
 
   return <main className={styles.page}>
     <header className={styles.header}>
-      <a className={styles.brand} href="https://seomeat.ru/" target="_blank" rel="noreferrer"><Image src="/seomeat-logo.svg" alt="SEO Meat" width={152} height={16} priority /><span><b>БАР</b><small>Бесплатный анализ релевантности</small></span></a>
-      <nav className={styles.headerRight} aria-label="Ссылки проекта"><a href="https://seomeat.ru/" target="_blank" rel="noreferrer">Школа SEO Мясо ↗</a><a href="https://t.me/seokotenkov" target="_blank" rel="noreferrer">@seokotenkov ↗</a><span className={styles.live}><i />Сервис работает</span></nav>
+      <Link className={styles.brand} href="/" aria-label="Главная БАР"><Image src="/seomeat-logo.svg" alt="SEO Meat" width={152} height={16} priority /><span><b>БАР</b><small>Бесплатный анализ релевантности</small></span></Link>
+      <nav className={styles.headerRight} aria-label="Ссылки проекта"><Link href="/">Главная БАР</Link><a href="https://seomeat.ru/" target="_blank" rel="noreferrer">Школа SEO Мясо ↗</a><a href="https://t.me/closedchannelkotenkov" target="_blank" rel="noreferrer">ТГК школы ↗</a><a href="https://t.me/seokotenkov" target="_blank" rel="noreferrer">Создатель ↗</a><span className={styles.live}><i />Сервис работает</span></nav>
     </header>
 
     <div className={styles.shell}>
@@ -775,83 +950,91 @@ export default function AnalyzerPage() {
         <form className={styles.form} onSubmit={submit}>
           <section className={styles.card}>
             <div className={styles.cardHead}><div><span className={styles.step}>01 · Корпус</span><h2>Запрос для поиска конкурентов</h2></div><span className={styles.subtle}>количество задаёте вы</span></div>
+            <aside className={`${styles.integrationCard} ${serverConfigured === false ? styles.integrationRequired : ""}`} aria-label="Подключение XMLRiver">
+              <div className={styles.integrationCardHead}>
+                <div><strong>XMLRiver — обязательный источник выдачи</strong><p>Получает реальные результаты Яндекса или Google и формирует список конкурентов. Без доступа БАР не сможет собрать корпус для сравнения.</p></div>
+                {serverConfigured === false && <a href="https://xmlriver.com/" target="_blank" rel="noreferrer">Подключить XMLRiver ↗</a>}
+              </div>
+              <p className={`${styles.connectionStatus} ${serverConfigured ? styles.connectionReady : serverConfigured === false ? styles.connectionMissing : ""}`} role="status"><i />{serverConfigured === null ? "Проверяем обязательное подключение…" : serverConfigured ? "Подключён на сервере — поиск конкурентов доступен" : "Не подключён — введите ID и ключ ниже"}</p>
+              {serverConfigured === false && <div className={styles.credentialsBody}><label className={styles.field}><span>ID пользователя</span><input className={styles.input} autoComplete="username" value={xmlUser} onChange={(event) => setXmlUser(event.target.value)} placeholder="user" /></label><label className={styles.field}><span>Ключ XMLRiver</span><input className={styles.input} type="password" autoComplete="current-password" value={xmlKey} onChange={(event) => setXmlKey(event.target.value)} placeholder="••••••••••••" /></label><small>Доступ хранится только до закрытия этой вкладки.</small></div>}
+            </aside>
             <label className={styles.field}><span>Запрос поисковой выдачи</span><input className={styles.input} required value={serpQuery} onChange={(event) => setSerpQuery(event.target.value)} placeholder="Например: seo курсы" /><small>По нему XMLRiver найдёт состав конкурентов.</small></label>
             <label className={styles.field}><span>Ключи для анализа</span><textarea className={`${styles.textarea} ${styles.keysTextarea}`} value={analysisKeys} onChange={(event) => setAnalysisKeys(event.target.value)} placeholder={'seo курсы\nобучение seo, курсы продвижения'} maxLength={3200} /><small>До 20 фраз через запятую или с новой строки. Если оставить пустым, используется запрос выдачи.</small></label>
             <div className={styles.queryGrid}>
-              <label className={styles.field}><span>Язык контента</span><select className={styles.input} value={language} onChange={(event) => setLanguage(event.target.value)}><option value="auto">Автоопределение</option>{LANGUAGES.map(([code, label]) => <option key={code} value={code}>{label} · {code.toUpperCase()}</option>)}</select></label>
-              <label className={styles.field}><span>Поисковая система</span><select className={styles.input} value={engine} onChange={(event) => { const next = event.target.value as SearchEngine; setEngine(next); setRegion(next === "yandex" ? "213" : ""); }}><option value="yandex">Яндекс</option><option value="google">Google</option></select></label>
-              <label className={styles.field}><span>{engine === "yandex" ? "Регион Яндекса" : "Location ID Google"}</span><input className={styles.input} inputMode="numeric" value={region} onChange={(event) => setRegion(event.target.value.replace(/\D/g, ""))} placeholder={engine === "yandex" ? "213 — Москва" : "Необязательно"} /></label>
+              <label className={styles.field}><span>Язык контента</span><select className={styles.input} value={language} onChange={(event) => selectLanguage(event.target.value)}><option value="auto">Автоопределение</option>{LANGUAGE_OPTIONS.map((option) => <option key={option.code} value={option.code}>{option.label} · {option.code.toUpperCase()} · {option.morphology === "lemmatization" ? "лемматизация" : option.morphology === "stemming" ? "стемминг" : "без морфологии"}</option>)}</select><small>{language === "auto" ? "Автоязык учитывает HTML lang, доминирующую письменность, характерные буквы и локальные стоп-слова. Для близких языков одной письменности точнее указать язык вручную." : `${languageCapability(language)?.morphologyLabel}; ${languageCapability(language)?.stopwordLabel}.`}</small></label>
+              <label className={styles.field}><span>Поисковая система</span><select className={styles.input} value={engine} onChange={(event) => { const next = event.target.value as SearchEngine; setEngine(next); setCountryCode("RU"); setRegion(""); setCountryOptions([]); setRegionOptions([]); }}><option value="yandex">Яндекс</option><option value="google">Google</option></select></label>
+              <label className={styles.field}><span>Страна</span><select className={styles.input} value={countryCode} disabled={!countryOptions.length} onChange={(event) => { setCountryCode(event.target.value); setRegion(""); setRegionOptions([]); }}>{!countryOptions.length && <option value="">Загружаем страны…</option>}{countryOptions.map((option) => <option key={`${option.engine}-${option.countryCode}`} value={option.countryCode}>{option.name} · {option.countryCode}</option>)}</select><small>Сначала выберите страну — следующее поле покажет только её регионы.</small></label>
+              <label className={styles.field}><span>Город или регион</span><input className={styles.input} required list={`xmlriver-regions-${engine}-${countryCode}`} value={region} onChange={(event) => setRegion(event.target.value)} placeholder="Начните вводить название" /><datalist id={`xmlriver-regions-${engine}-${countryCode}`}>{availableRegionOptions.map((option) => <option key={`${option.engine}-${option.id}`} value={option.label} />)}</datalist><small>{availableRegionOptions.length ? "Выберите город, регион или всю страну из подсказок XMLRiver." : region.trim() ? "Ищем совпадения внутри выбранной страны…" : "После выбора страны начните вводить город или регион."}</small></label>
               <label className={styles.field}><span>Устройство</span><select className={styles.input} value={device} onChange={(event) => setDevice(event.target.value as Device)}><option value="desktop">Компьютер</option><option value="mobile">Телефон</option><option value="tablet">Планшет</option></select></label>
               <label className={styles.field}><span>Конкурентов</span><input className={styles.input} type="number" min={1} step={1} value={competitorCount} onChange={(event) => setCompetitorCount(Math.max(1, Math.trunc(Number(event.target.value) || 1)))} /></label>
             </div>
           </section>
           <section className={styles.card}>
             <div className={styles.cardHead}><div><span className={styles.step}>02 · Своя страница</span><h2>Что сравниваем</h2></div><span className={styles.subtle}>URL или готовый текст</span></div>
+            <aside className={styles.integrationCard} aria-label="Подключение Firecrawl">
+              <div className={styles.integrationCardHead}>
+                <div><strong>Firecrawl — дополнительный fallback</strong><p>Если обычная HTTP-загрузка упирается в защиту или заглушку, Firecrawl автоматически пробует получить полноценную страницу. Это может заметно повысить долю успешно разобранных конкурентов.</p></div>
+                {firecrawlConfigured === false && <a href="https://www.firecrawl.dev/" target="_blank" rel="noreferrer">Подключить Firecrawl ↗</a>}
+              </div>
+              <p className={`${styles.connectionStatus} ${firecrawlConfigured ? styles.connectionReady : firecrawlConfigured === false ? styles.connectionOptional : ""}`} role="status"><i />{firecrawlConfigured === null ? "Проверяем дополнительное подключение…" : firecrawlConfigured ? "Подключён — fallback включается автоматически после неудачной обычной загрузки" : "Не подключён — обычная загрузка продолжит работать без fallback"}</p>
+            </aside>
             <PageEditor draft={ownPage} onChange={setOwnPage} />
-            <label className={`${styles.fetchOption} ${firecrawlConfigured === false ? styles.fetchOptionDisabled : ""}`}><input aria-label="Использовать Firecrawl для недоступных URL" type="checkbox" checked={useFirecrawl} disabled={firecrawlConfigured === false} onChange={(event) => setUseFirecrawl(event.target.checked)} /><span><b>Firecrawl для недоступных URL</b><small>{firecrawlConfigured === false ? "Ключ FIRECRAWL не найден в окружении сервера." : "Включается только после неудачной обычной загрузки или обнаружения заглушки."}</small></span></label>
-            <label className={`${styles.fetchOption} ${styles.tripletOption} ${loading ? styles.fetchOptionDisabled : ""}`}><input aria-label="Построить семантические связи после основного анализа" type="checkbox" checked={tripletsEnabled} disabled={loading} onChange={(event) => updateTripletsEnabled(event.target.checked)} /><span><b>Семантические связи · spaCy · опционально</b><small>Сначала строится обычный отчёт. Затем локальный анализатор извлекает из всего сохранённого корпуса все леммы и N-граммы — биграммы и триграммы, определяет части речи и оставляет только связи, подтверждённые минимум двумя разными предложениями.</small></span></label>
           </section>
           <section className={`${styles.card} ${styles.stopCard}`}>
             <div className={styles.cardHead}><div><span className={styles.step}>03 · Исключения</span><h2>Стоп-слова и стоп-фразы</h2></div><span className={styles.subtle}>необязательно</span></div>
-            <StopFields stopWords={stopWords} stopPhrases={stopPhrases} setStopWords={setStopWords} setStopPhrases={setStopPhrases} />
+            <StopFields language={language} stopWords={stopWords} stopPhrases={stopPhrases} setStopWords={setStopWords} setStopPhrases={setStopPhrases} />
           </section>
-          <details className={styles.credentials} open={serverConfigured === false}>
-            <summary><span><b>Доступ XMLRiver</b><small>{serverConfigured === null ? "Проверяем…" : serverConfigured ? "Ключ подключён на сервере" : "Введите ключ — он хранится только до закрытия этой вкладки"}</small></span><i>{serverConfigured ? "Подключён" : "Настроить"}</i></summary>
-            {!serverConfigured && <div className={styles.credentialsBody}><label className={styles.field}><span>ID пользователя</span><input className={styles.input} autoComplete="username" value={xmlUser} onChange={(event) => setXmlUser(event.target.value)} placeholder="user" /></label><label className={styles.field}><span>Ключ XMLRiver</span><input className={styles.input} type="password" autoComplete="current-password" value={xmlKey} onChange={(event) => setXmlKey(event.target.value)} placeholder="••••••••••••" /></label></div>}
-          </details>
           {error && <div className={styles.error} role="alert">{error}</div>}
-          {loading ? <div className={styles.loading} role="status"><span className={styles.spinner} /><div><strong>Выполняем анализ</strong><span>{loadingText}</span></div></div> : <div className={styles.actions}><p>Автоязык учитывает HTML lang и письменность текста. Недоступные страницы будут отмечены.</p><button className={styles.primary} type="submit" disabled={!canAnalyze}>Найти и проанализировать <span>→</span></button></div>}
+          {loading ? <div className={styles.loading} role="status"><span className={styles.spinner} /><div><strong>Выполняем анализ</strong><span>{loadingText}</span></div></div> : <div className={styles.actions}><p>Автоязык учитывает HTML lang и письменность текста. Недоступные страницы будут отмечены.</p><button className={styles.primary} type="submit" title="Найти конкурентов в выдаче и построить семантический отчёт" disabled={!canAnalyze}>Найти и проанализировать <span>→</span></button></div>}
         </form>
       </>}
 
       {result && <section id="report" className={styles.report}>
         <div className={styles.resultTop}>
           <div><span className={styles.eyebrow}>Семантический отчёт</span><h1>{result.meta.serpQuery}</h1><p>Корпус рассчитан {new Date(result.meta.analyzedAt).toLocaleString("ru-RU")}</p></div>
-          <div className={styles.resultActions}><button className={styles.ghostButton} type="button" onClick={refreshCompetitors}>↻ Обновить конкурентов</button><button className={styles.exportButton} type="button" onClick={() => window.print()}>Экспорт PDF</button></div>
+          <div className={styles.resultActions}><button className={styles.ghostButton} type="button" title="Вернуться к настройкам и заново собрать корпус конкурентов" onClick={refreshCompetitors}>↻ Обновить конкурентов</button><button className={styles.exportButton} type="button" title="Открыть системную печать для сохранения отчёта в PDF" onClick={() => window.print()}>Экспорт PDF</button></div>
         </div>
 
         <section className={styles.keyEditor} aria-label="Ключи анализа">
           <div className={styles.keyEditorCopy}><span className={styles.step}>Настройки этого отчёта</span><h2>Пересчитать на том же корпусе</h2><p>Ключи, стоп-слова и стоп-фразы применятся к уже загруженным страницам. Поиск конкурентов и сетевые запросы повторно не запускаются.</p></div>
           <div className={styles.recalcInputs}>
             <label className={styles.field}><span>Ключевые фразы</span><textarea className={`${styles.textarea} ${styles.reportKeysTextarea}`} value={analysisKeys} onChange={(event) => setAnalysisKeys(event.target.value)} placeholder={result.meta.serpQuery} /><small>{currentKeys.length} из 20 ключей · запятая или новая строка</small></label>
-            <StopFields compact stopWords={stopWords} stopPhrases={stopPhrases} setStopWords={setStopWords} setStopPhrases={setStopPhrases} />
-            <label className={`${styles.fetchOption} ${styles.tripletOption} ${styles.tripletReportOption} ${loading || tripletBusy || !snapshotIsCurrent ? styles.fetchOptionDisabled : ""}`}><input aria-label="Пересчитывать семантические связи" type="checkbox" checked={tripletsEnabled} disabled={loading || tripletBusy || !snapshotIsCurrent} onChange={(event) => updateTripletsEnabled(event.target.checked)} /><span><b>Семантические связи после пересчёта</b><small>Используется сохранённый корпус: поиск и загрузка конкурентов повторно не запускаются. spaCy повторно размечает предложения только при включённой опции.</small></span></label>
+            <StopFields compact language={result.meta.language} stopWords={stopWords} stopPhrases={stopPhrases} setStopWords={setStopWords} setStopPhrases={setStopPhrases} />
           </div>
-          <button className={styles.recalculateButton} type="button" onClick={recalculate} disabled={loading || tripletBusy || !snapshotIsCurrent || !currentKeys.length}>{loading ? "Пересчитываем…" : "Пересчитать отчёт"}</button>
+          <button className={styles.recalculateButton} type="button" title="Применить новые ключи и стоп-термы к уже загруженному корпусу без повторного парсинга" onClick={recalculate} disabled={loading || !snapshotIsCurrent || !currentKeys.length}>{loading ? "Пересчитываем…" : "Пересчитать отчёт"}</button>
         </section>
 
-        {!snapshotIsCurrent && <div className={styles.legacySnapshot} role="alert"><div><strong>Сохранённый корпус нужно обновить</strong><p>Этот отчёт можно просматривать, но пересчёт и семантические связи требуют актуальный snapshot v5.</p></div><button type="button" onClick={refreshCompetitors}>Обновить конкурентов</button></div>}
+        {!snapshotIsCurrent && <div className={styles.legacySnapshot} role="alert"><div><strong>Сохранённый корпус нужно обновить</strong><p>Этот отчёт можно просматривать, но пересчёт требует актуальный snapshot v5.</p></div><button type="button" onClick={refreshCompetitors}>Обновить конкурентов</button></div>}
         {loading && <div className={styles.loading} role="status"><span className={styles.spinner} /><div><strong>Обновляем отчёт</strong><span>{loadingText}</span></div></div>}
         {error && <div className={styles.error} role="alert">{error}</div>}
 
-        <div className={styles.contextBar} aria-label="Параметры отчёта">
+        <div className={styles.contextBar} aria-label="Параметры отчёта" title="Условия, на которых собран и рассчитан текущий отчёт">
           <span>{result.meta.engine === "google" ? "Google" : "Яндекс"}</span>{result.meta.region && <span>Регион {result.meta.region}</span>}
           <span>{result.meta.device === "mobile" ? "Телефон" : result.meta.device === "tablet" ? "Планшет" : "Компьютер"}</span>
-          <span>Язык: {result.meta.languageLabel} · {result.meta.language.toUpperCase()}</span><span>Ключей: {result.meta.queries.length}</span>
-          {!!result.meta.stopWords?.length && <span>Стоп-слов: {integer.format(result.meta.stopWords.length)}</span>}{!!result.meta.stopPhrases?.length && <span>Стоп-фраз: {integer.format(result.meta.stopPhrases.length)}</span>}
+          <span>Язык: {result.meta.languageLabel} · {result.meta.language.toUpperCase()}</span>
+          <span>Слова: {result.meta.morphologyLabel ?? (result.meta.morphologyMode === "lemmatization" ? "Словарная лемматизация" : result.meta.morphologyMode === "stemming" ? "Стемминг Snowball" : "Без склейки словоформ")}</span><span>Ключей: {result.meta.queries.length}</span>
+          {!!result.meta.stopWords?.length && <span>Доп. стоп-слов: {integer.format(result.meta.stopWords.length)}</span>}{!!result.meta.stopPhrases?.length && <span>Доп. стоп-фраз: {integer.format(result.meta.stopPhrases.length)}</span>}
           <span>Найдено {integer.format(result.meta.competitorsFound)}</span><span>В расчёте {integer.format(result.meta.competitorsAnalyzed)}</span>
           <span className={result.meta.confidence === "high" ? styles.confidenceHigh : result.meta.confidence === "medium" ? styles.confidenceMedium : styles.confidenceLow}>Надёжность: {result.meta.confidence === "high" ? "высокая" : result.meta.confidence === "medium" ? "средняя" : "низкая"}</span>
         </div>
 
-        {result.warnings.length > 0 && <details className={styles.warning}><summary>Не вошли в расчёт: {integer.format(result.warnings.length)} {result.warnings.length === 1 ? "страница" : "страницы"}</summary><ul>{result.warnings.map((warning) => <li key={`${warning.position}-${warning.name}-${warning.error}`}><b>{warning.position ? `${integer.format(warning.position)}. ` : ""}{warning.name}</b> — {warning.error}</li>)}</ul></details>}
+        {result.warnings.length > 0 && <details className={styles.warning} title="Страницы, исключённые из корпуса из-за ошибки загрузки или признаков антибот-заглушки"><summary>Не вошли в расчёт: {integer.format(result.warnings.length)} {result.warnings.length === 1 ? "страница" : "страницы"}</summary><ul>{result.warnings.map((warning) => <li key={`${warning.position}-${warning.name}-${warning.error}`}><b>{warning.position ? `${integer.format(warning.position)}. ` : ""}{warning.name}</b> — {warning.error}</li>)}</ul></details>}
 
-        <div className={styles.summaryMetrics}>
+        <div className={styles.summaryMetrics} aria-label="Сводка нашей страницы и средние показатели конкурентов">
           <div className={styles.metricGrid}>
-            <Metric label="TF-IDF ключей" value={percent(result.summary.keyTfidfScore)} note={`сырой вес ${number.format(result.summary.keyTfidfRaw)}`} />
-            <Metric label="Взвешенный охват" value={percent(result.summary.weightedCoverage)} note="доля важных терминов и фраз" />
-            <Metric label="Взвешенная плотность" value={percent(result.summary.weightedDensity)} note="выполнение ориентиров по вхождениям" />
+            <Metric label="TF-IDF ключей" value={percent(result.summary.keyTfidfScore)} benchmark={competitorDocuments.length ? percent(competitorMetricAverages.keyTfidfScore) : undefined} note={`сырой вес ${number.format(result.summary.keyTfidfRaw)} · справа среднее конкурентов`} tooltip="Оценка заметности введённых ключей по TF-IDF. После «из» показано среднее значение принятых конкурентов." />
+            <Metric label="Взвешенный охват" value={percent(result.summary.weightedCoverage)} benchmark={competitorDocuments.length ? percent(competitorMetricAverages.weightedCoverage) : undefined} note="доля важных терминов и фраз · справа среднее конкурентов" tooltip="Штучный охват важных лемм и фраз: терм засчитывается, если присутствует хотя бы один раз. После «из» показано среднее конкурентов." />
+            <Metric label="Взвешенная плотность" value={percent(result.summary.weightedDensity)} benchmark={competitorDocuments.length ? percent(competitorMetricAverages.weightedDensity) : undefined} note="выполнение ориентиров · справа среднее конкурентов" tooltip="Выполнение ориентиров по числу вхождений каждого важного терма. После «из» показано среднее конкурентов." />
           </div>
-          <div className={styles.volumeMetric}><Metric label="Объём текста" value={integer.format(result.summary.ownWords)} note={`медиана конкурентов ${integer.format(result.summary.medianWords)}`} /></div>
+          <div className={styles.volumeMetric}><Metric label="Объём текста" value={integer.format(result.summary.ownWords)} note={`медиана конкурентов ${integer.format(result.summary.medianWords)}`} tooltip="Количество слов на вашей странице. Для устойчивого ориентира объёма здесь используется медиана конкурентов." /></div>
         </div>
 
-        <div className={styles.recommendation}><div><span>Главный вывод</span><strong>{result.summary.recommendation}</strong></div><p>Ориентир по объёму: {integer.format(result.summary.recommendedMin)}–{integer.format(result.summary.recommendedMax)} слов (Q25–Q75 конкурентов).</p></div>
-
         <section className={styles.reportSection}>
-          <div className={styles.sectionHead}><div><span className={styles.sectionIndex}>01</span><h2>Леммы и важность</h2><p>Важность рассчитывается на основе TF-IDF и других сигналов релевантности.</p></div><button className={styles.download} type="button" onClick={() => downloadCsv("terms.csv", visibleTerms.map((row) => ({ Лемма: row.term, Словоформы: row.forms.join(", "), Зона: ZONES.find((item) => item.key === activeZone)?.label, "Входит в ключ": row.keywordHit ? "Да" : "Нет", Документы: countUp(row.sites), "У нас": countUp(row.ownCount), Ориентир: countUp(row.medianCount), Q25: countUp(row.q25), Q75: countUp(row.q75), Важность: row.importance, Действие: row.status })))}>Скачать CSV</button></div>
+          <div className={styles.sectionHead}><div><span className={styles.sectionIndex}>01</span><div className={styles.titleWithHelp}><h2>Леммы и важность</h2><HelpTip text="Здесь словоформы объединены в леммы, чтобы сравнивать смысловые термы, а не отдельные окончания." /></div><p><b>Важность — оценка 0–100.</b> Она учитывает TF-IDF, число документов с леммой и подтверждение в ключах и заголовках. Точные коэффициенты не показываются.</p></div><button className={styles.download} type="button" title="Скачать текущую таблицу лемм со всеми строками и выбранной зоной" onClick={() => downloadCsv("terms.csv", sortedTerms.map((row) => ({ Лемма: row.term, Словоформы: row.forms.join(", "), Зона: ZONES.find((item) => item.key === activeZone)?.label, "Входит в ключ": row.keywordHit ? "Да" : "Нет", Документы: countUp(row.sites), "У нас": countUp(row.ownCount), Ориентир: countUp(row.medianCount), Q25: countUp(row.q25), Q75: countUp(row.q75), Важность: row.importance, Действие: row.status })))}>Скачать CSV</button></div>
           <div className={styles.zoneTabs} role="tablist" aria-label="Зона анализа лемм">{ZONES.map((zone) => <button key={zone.key} type="button" role="tab" aria-selected={activeZone === zone.key} className={activeZone === zone.key ? styles.activeZone : ""} title={zone.hint} onClick={() => selectZone(zone.key)}>{zone.label}</button>)}</div>
           <div className={styles.comparisonTop}>
             <div><h3>Сравнение вхождений по леммам</h3><p>{ZONES.find((item) => item.key === activeZone)?.hint} · абсолютные целые вхождения · единая шкала от нуля</p></div>
-            <label className={styles.competitorSelect}><span>Конкурент для сравнения</span><select value={selectedProfile?.id ?? ""} disabled={!comparisonProfiles.length} onChange={(event) => setSelectedCompetitorId(event.target.value)}>{!comparisonProfiles.length && <option value="">Профили недоступны</option>}{comparisonProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.position ? `№${integer.format(profile.position)} · ` : ""}{hostLabel(profile.url)}</option>)}</select></label>
+            <label className={styles.competitorSelect}><span>Конкурент для сравнения</span><select title="Выберите конкурента для третьей серии на графике" value={selectedProfile?.id ?? ""} disabled={!comparisonProfiles.length} onChange={(event) => setSelectedCompetitorId(event.target.value)}>{!comparisonProfiles.length && <option value="">Профили недоступны</option>}{comparisonProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.position ? `№${integer.format(profile.position)} · ` : ""}{hostLabel(profile.url)}</option>)}</select></label>
           </div>
           <div className={styles.compareLegend} aria-label="Легенда графика"><span><i className={styles.compareOwn} />Наша страница</span><span><i className={styles.compareMedian} />Медиана</span><span><i className={styles.compareSelected} />{selectedProfile ? hostLabel(selectedProfile.url) : "Выбранный конкурент"}</span></div>
           <div className={styles.lemmaComparison}>{comparisonRows.map((item) => <div className={styles.lemmaCompareRow} key={item.term} aria-label={`${item.term}: наша страница ${integer.format(item.own)}, медиана ${integer.format(item.median)}, конкурент ${integer.format(item.selected)} вхождений`}>
@@ -863,13 +1046,13 @@ export default function AnalyzerPage() {
             </div>
             <div className={styles.comparisonValues}><b>{integer.format(item.own)}</b><b>{integer.format(item.median)}</b><b>{integer.format(item.selected)}</b></div>
           </div>)}{!comparisonRows.length && <p className={styles.empty}>Нет лемм для текущей зоны и фильтра.</p>}</div>
-          {chartLimit < visibleTerms.length && <div className={styles.chartMore}><button type="button" onClick={() => setChartLimit((value) => value + CHART_PAGE_SIZE)}>Показать ещё 12 <span>{integer.format(visibleTerms.length - chartLimit)} осталось</span></button></div>}
-          <div className={styles.tableTools}><FilterButtons value={termFilter} onChange={(value) => { setTermFilter(value); setTermPage(1); setChartLimit(CHART_PAGE_SIZE); }} /><input className={styles.search} value={termSearch} onChange={(event) => { setTermSearch(event.target.value); setTermPage(1); setChartLimit(CHART_PAGE_SIZE); }} placeholder="Лемма или словоформа" aria-label="Поиск по леммам" /></div>
+          {chartLimit < visibleTerms.length && <div className={styles.chartMore}><button type="button" title="Добавить на график следующие 12 лемм" onClick={() => setChartLimit((value) => value + CHART_PAGE_SIZE)}>Показать ещё 12 <span>{integer.format(visibleTerms.length - chartLimit)} осталось</span></button></div>}
+          <div className={styles.tableTools}><FilterButtons value={termFilter} onChange={(value) => { setTermFilter(value); setTermPage(1); setChartLimit(CHART_PAGE_SIZE); }} /><input className={styles.search} title="Фильтровать таблицу по лемме или любой найденной словоформе" value={termSearch} onChange={(event) => { setTermSearch(event.target.value); setTermPage(1); setChartLimit(CHART_PAGE_SIZE); }} placeholder="Лемма или словоформа" aria-label="Поиск по леммам" /></div>
           <div className={styles.tableWrap}><table className={`${styles.table} ${styles.lemmaTable}`}>
-            <thead><tr><th>Лемма / формы</th><th>Документы</th><th>У нас</th><th>Ориентир</th><th>Важность</th><th>Действие</th></tr></thead>
+            <thead><tr><SortableHeader label="Лемма / формы" sortKey="term" state={termSort} onSort={(state) => { setTermSort(state); setTermPage(1); }} /><SortableHeader label="Документы" sortKey="sites" state={termSort} onSort={(state) => { setTermSort(state); setTermPage(1); }} numeric /><SortableHeader label="У нас" sortKey="ownCount" state={termSort} onSort={(state) => { setTermSort(state); setTermPage(1); }} numeric /><SortableHeader label="Ориентир" sortKey="medianCount" state={termSort} onSort={(state) => { setTermSort(state); setTermPage(1); }} numeric /><SortableHeader label="Важность" sortKey="importance" state={termSort} onSort={(state) => { setTermSort(state); setTermPage(1); }} numeric /><SortableHeader label="Действие" sortKey="status" state={termSort} onSort={(state) => { setTermSort(state); setTermPage(1); }} /></tr></thead>
             <tbody>{pagedTerms.map((row) => <tr key={row.key}>
               <td className={styles.termCell}><div className={styles.termTitle}><strong>{row.term}</strong>{row.keywordHit && <span className={styles.keywordBadge}>ключ</span>}</div><small>{row.forms.filter((form) => form !== row.term).slice(0, 5).join(" · ") || "основная форма"}</small></td>
-              <td><b>{integer.format(countUp(row.sites))} из {integer.format(result.meta.competitorsAnalyzed)}</b><small>страниц с леммой</small></td>
+              <td><b>{integer.format(countUp(row.sites))} из {integer.format(result.meta.competitorsAnalyzed)}</b></td>
               <td><b>{integer.format(countUp(row.ownCount))}</b><small>вхождений</small></td>
               <td><b>{integer.format(countUp(row.medianCount))}</b><small>{integer.format(countUp(row.q25))}–{integer.format(countUp(row.q75))}</small></td>
               <td><b>{number.format(row.importance)}</b></td>
@@ -880,11 +1063,11 @@ export default function AnalyzerPage() {
         </section>
 
         <section className={styles.reportSection} aria-labelledby="clouds-heading">
-          <div className={styles.sectionHead}><div><span className={styles.sectionIndex}>02</span><h2 id="clouds-heading">Облака слов: три страницы на одной шкале</h2><p>Среднее по конкурентам, наша страница и выбранный конкурент всегда видны рядом. Размер слова отражает частоту в выбранной HTML-зоне.</p></div></div>
+          <div className={styles.sectionHead}><div><span className={styles.sectionIndex}>02</span><div className={styles.titleWithHelp}><h2 id="clouds-heading">Облако</h2><HelpTip text="Три облака используют одну шкалу размеров, поэтому слова можно сравнивать между колонками напрямую." /></div><p>Среднее по конкурентам, наша страница и выбранный конкурент всегда видны рядом. Размер слова отражает частоту в выбранной HTML-зоне.</p></div></div>
           <div className={styles.cloudStage}>
             <div className={styles.cloudToolbar}>
               <div className={styles.zoneTabs} role="tablist" aria-label="HTML-зона облаков слов">{CLOUD_ZONES.map((zone) => <button key={zone.key} type="button" role="tab" aria-selected={cloudZone === zone.key} aria-label={`Показать облака слов: ${zone.hint}`} className={cloudZone === zone.key ? styles.activeZone : ""} title={zone.hint} onClick={() => setCloudZone(zone.key)}>{zone.label}</button>)}</div>
-              <label className={styles.competitorSelect}><span>Конкурент в третьем облаке</span><select aria-label="Выбрать конкурента для третьего облака слов" value={selectedProfile?.id ?? ""} disabled={!comparisonProfiles.length} onChange={(event) => setSelectedCompetitorId(event.target.value)}>{!comparisonProfiles.length && <option value="">Профили недоступны</option>}{comparisonProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.position ? `№${integer.format(profile.position)} · ` : ""}{hostLabel(profile.url)}</option>)}</select></label>
+              <label className={styles.competitorSelect}><span>Конкурент в третьем облаке</span><select title="Выберите отдельного конкурента для сравнения со средним и вашей страницей" aria-label="Выбрать конкурента для третьего облака слов" value={selectedProfile?.id ?? ""} disabled={!comparisonProfiles.length} onChange={(event) => setSelectedCompetitorId(event.target.value)}>{!comparisonProfiles.length && <option value="">Профили недоступны</option>}{comparisonProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.position ? `№${integer.format(profile.position)} · ` : ""}{hostLabel(profile.url)}</option>)}</select></label>
             </div>
             <div className={styles.cloudGrid} role="group" aria-label={`Сравнение облаков слов: ${cloudZoneHint}`}>
               <Cloud title="Среднее конкурентов" note={`${integer.format(result.meta.competitorsAnalyzed)} страниц · ${cloudZoneHint}`} words={aggregateCloud} maxFrequency={cloudMax} />
@@ -895,75 +1078,35 @@ export default function AnalyzerPage() {
         </section>
 
         <section className={styles.reportSection}>
-          <div className={styles.sectionHead}><div><span className={styles.sectionIndex}>03</span><h2>N-граммы и сходство с ключами</h2><p>Важность фразы учитывает её распространённость у принятых конкурентов, сходство с входными ключами и подтверждение в Title и H1–H6. Шкала нормирована плавно; в метрики документов сходство не входит.</p></div><button className={styles.download} type="button" onClick={() => downloadCsv("ngrams.csv", visibleNgrams.map((row) => ({ Фраза: row.phrase, Варианты: row.forms.join(", "), Зона: ZONES.find((item) => item.key === ngramZone)?.label, "Лучший ключ": row.bestKeyword, "Входит в ключ": row.keywordHit ? "Да" : "Нет", Документы: countUp(row.sites), "У нас": countUp(row.ownCount), Ориентир: countUp(row.medianCount), Q25: countUp(row.q25), Q75: countUp(row.q75), "Важность зоны": row.importance, "Сходство с ключом": row.keySimilarity, "Приоритет (глобальный)": row.priority, Действие: row.status })))}>Скачать CSV</button></div>
+          <div className={styles.sectionHead}><div><span className={styles.sectionIndex}>03</span><div className={styles.titleWithHelp}><h2>N-граммы и связь с ключами</h2><HelpTip text="N-граммы — устойчивые фразы из нескольких слов, найденные на страницах корпуса." /></div><p><b>Важность — оценка 0–100.</b> Сначала учитываются распространённость фразы у конкурентов и смысловая связь с ключами, затем — подтверждение в ключе и Title/H1–H6. Точные коэффициенты не показываются. Модель связи: <b>{result.meta.phraseSimilarityMethod || "локальный резервный алгоритм"}</b>.</p></div><button className={styles.download} type="button" title="Скачать текущую таблицу N-грамм со всеми строками и выбранной зоной" onClick={() => downloadCsv("ngrams.csv", sortedNgrams.map((row) => ({ Фраза: row.phrase, Варианты: row.forms.join(", "), "Вложенные фразы": (row.nestedChildren ?? []).map((child) => child.phrase).join(", "), Зона: ZONES.find((item) => item.key === ngramZone)?.label, "Попадание в ключ": ngramKeyMark(row, currentKeys) || "—", Документы: countUp(row.sites), "У нас": countUp(row.ownCount), Ориентир: countUp(row.medianCount), Q25: countUp(row.q25), Q75: countUp(row.q75), Важность: row.importance, Действие: row.status })))}>Скачать CSV</button></div>
           <div className={styles.zoneTabs} role="tablist" aria-label="Зона анализа N-грамм">{ZONES.map((zone) => <button key={zone.key} type="button" role="tab" aria-selected={ngramZone === zone.key} className={ngramZone === zone.key ? styles.activeZone : ""} title={zone.hint} onClick={() => { setNgramZone(zone.key); setNgramPage(1); }}>{zone.label}</button>)}</div>
-          <div className={styles.tableTools}><FilterButtons value={ngramFilter} onChange={(value) => { setNgramFilter(value); setNgramPage(1); }} /><input className={styles.search} value={ngramSearch} onChange={(event) => { setNgramSearch(event.target.value); setNgramPage(1); }} placeholder="Фраза или входной ключ" aria-label="Поиск по N-граммам" /></div>
+          <div className={styles.tableTools}><FilterButtons value={ngramFilter} onChange={(value) => { setNgramFilter(value); setNgramPage(1); }} /><input className={styles.search} title="Фильтровать таблицу по фразе, её варианту или входному ключу" value={ngramSearch} onChange={(event) => { setNgramSearch(event.target.value); setNgramPage(1); }} placeholder="Фраза или входной ключ" aria-label="Поиск по N-граммам" /></div>
           <div className={styles.tableWrap}><table className={styles.table}>
-            <thead><tr><th>Фраза / варианты</th><th>Ближайший ключ</th><th>Документы</th><th>У нас</th><th>Ориентир</th><th>Сходство с ключом</th><th>Важность</th><th>Приоритет</th><th>Действие</th></tr></thead>
-            <tbody>{pagedNgrams.map((row) => <tr key={row.key}><td className={styles.termCell}><div className={styles.termTitle}><strong>{row.phrase}</strong>{row.keywordHit && <span className={styles.keywordBadge}>ключ</span>}</div><small>{row.forms.filter((form) => form !== row.phrase).slice(0, 3).join(" · ") || "основная форма"}</small></td><td className={styles.keywordCell}><b>{row.bestKeyword || "—"}</b><small>входной ключ</small></td><td><b>{integer.format(countUp(row.sites))} из {integer.format(result.meta.competitorsAnalyzed)}</b><small>страниц с фразой</small></td><td><b>{integer.format(countUp(row.ownCount))}</b><small>вхождений в зоне</small></td><td><b>{integer.format(countUp(row.medianCount))}</b><small>{integer.format(countUp(row.q25))}–{integer.format(countUp(row.q75))}</small></td><td><b>{number.format(row.keySimilarity)}</b><small>близость к ключу</small></td><td><b>{number.format(row.importance)}</b><small>для активной зоны</small></td><td><b>{number.format(row.priority)}</b><small>глобальный</small></td><td><Status value={row.status} /></td></tr>)}</tbody>
+            <thead><tr><SortableHeader label="Фраза / варианты" sortKey="phrase" state={ngramSort} onSort={(state) => { setNgramSort(state); setNgramPage(1); }} /><SortableHeader label="Попадание в ключ" sortKey="keyMark" state={ngramSort} onSort={(state) => { setNgramSort(state); setNgramPage(1); }} numeric /><SortableHeader label="Документы" sortKey="sites" state={ngramSort} onSort={(state) => { setNgramSort(state); setNgramPage(1); }} numeric /><SortableHeader label="У нас" sortKey="ownCount" state={ngramSort} onSort={(state) => { setNgramSort(state); setNgramPage(1); }} numeric /><SortableHeader label="Ориентир" sortKey="medianCount" state={ngramSort} onSort={(state) => { setNgramSort(state); setNgramPage(1); }} numeric /><SortableHeader label="Важность" sortKey="importance" state={ngramSort} onSort={(state) => { setNgramSort(state); setNgramPage(1); }} numeric /><SortableHeader label="Действие" sortKey="status" state={ngramSort} onSort={(state) => { setNgramSort(state); setNgramPage(1); }} /></tr></thead>
+            <tbody>{pagedNgrams.map((row) => { const keyMark = ngramKeyMark(row, currentKeys); return <tr key={row.key}><td className={styles.termCell}><strong>{row.phrase}</strong><small>{row.forms.filter((form) => form !== row.phrase).slice(0, 3).join(" · ") || "основная форма"}</small>{!!row.nestedChildren?.length && <span className={styles.nestedChildren}>Включает: {row.nestedChildren.map((child) => `${child.phrase} · ${child.occurrences}`).join("; ")}</span>}</td><td>{keyMark ? <span className={`${styles.keywordBadge} ${keyMark === "Возможно ключ" ? styles.possibleKeywordBadge : ""}`}>{keyMark}</span> : <span aria-label="Нет связи с ключом">—</span>}</td><td><b>{integer.format(countUp(row.sites))} из {integer.format(result.meta.competitorsAnalyzed)}</b></td><td><b>{integer.format(countUp(row.ownCount))}</b><small>вхождений в зоне</small></td><td><b>{integer.format(countUp(row.medianCount))}</b><small>{integer.format(countUp(row.q25))}–{integer.format(countUp(row.q75))}</small></td><td><b>{number.format(row.importance)}</b></td><td><Status value={row.status} /></td></tr>; })}</tbody>
           </table></div><Pagination page={safeNgramPage} pages={ngramPages} total={visibleNgrams.length} setPage={setNgramPage} />
         </section>
 
-        <section id="triplets" className={`${styles.reportSection} ${styles.tripletSection}`}>
-          <div className={styles.sectionHead}>
-            <div><span className={styles.sectionIndex}>04</span><h2>Семантические связи</h2><p>spaCy отдельно разбирает весь сохранённый корпус и извлекает из предложений все леммы, биграммы и триграммы — не только строки компактных таблиц. Затем определяет части речи, позиции и вероятные роли «сущность → действие → сущность». Повторно искать и загружать конкурентов не нужно.</p></div>
-            <div className={styles.tripletHeadActions}>
-              <span className={`${styles.tripletStatus} ${tripletBusy ? styles.tripletStatusBusy : tripletError ? styles.tripletStatusError : tripletData?.status === "ready" ? styles.tripletStatusReady : tripletData?.status === "unavailable" ? styles.tripletStatusWarning : ""}`} aria-live="polite"><i />{tripletStatusLabel}</span>
-              <button className={styles.tripletBuildButton} type="button" disabled={loading || tripletBusy || !snapshotIsCurrent} onClick={() => void buildTriplets(result)}>{tripletData?.status === "ready" ? "Пересобрать связи" : "Построить связи"}</button>
-            </div>
-          </div>
-
-          {tripletBusy && <div className={styles.tripletProgress} role="status" aria-live="polite"><div><i className={tripletPhase === "extracting" ? styles.tripletProgressExtracting : ""} /></div><strong>{tripletPhase === "selecting" ? "Готовим сущности и предложения" : "spaCy размечает предложения"}</strong><span>{tripletPhase === "selecting" ? "Извлекаем все леммы, биграммы и триграммы из полного сохранённого корпуса." : "Определяем части речи и позиции, затем объединяем одинаковые связи и проверяем минимум два разных доказательства."}</span></div>}
-          {tripletError && <div className={styles.tripletMessageError} role="alert"><strong>Связи не построены</strong><span>{tripletError}</span><button type="button" onClick={() => void buildTriplets(result)}>Повторить</button></div>}
-
-          {!tripletBusy && !tripletError && !tripletData && <div className={styles.tripletIntro}><div><strong>Анализ выключен по умолчанию</strong><p>Обычный семантический отчёт уже готов. Нажмите «Построить связи», чтобы отдельно запустить локальный синтаксический разбор spaCy.</p></div><ul><li>учитывается весь сохранённый корпус, а не только строки таблиц</li><li>одна сущность может иметь несколько связей</li><li>связь показывается минимум по двум предложениям</li></ul></div>}
-
-          {!tripletBusy && !tripletError && tripletData?.status === "unavailable" && <div className={styles.tripletUnavailable}><strong>spaCy сейчас недоступен</strong><p>{tripletData.message || "Основной отчёт сохранён и полностью доступен. Запустите локальный сервис spaCy и повторите только этот этап."}</p></div>}
-          {!tripletBusy && !tripletError && tripletData?.status === "disabled" && <div className={styles.tripletIntro}><div><strong>Дополнительный анализ выключен</strong><p>{tripletData.message || "Включите опцию и постройте связи, когда они понадобятся."}</p></div></div>}
-          {!tripletBusy && !tripletError && tripletData?.status === "empty" && <div className={styles.tripletEmptyState}><strong>Подтверждённых связей не найдено</strong><p>{tripletData.message || "Кандидаты были проверены, но в предложениях корпуса не нашлось достаточно ясных связей."}</p><span>{integer.format(tripletCandidateCount)} сущностей · {integer.format(tripletProcessedSentenceCount)} предложений</span></div>}
-          {!tripletBusy && !tripletError && tripletData?.status === "empty" && tripletIncompleteCorpus && <div className={styles.tripletTruncated}>Сервис сообщил, что обработал не весь сохранённый корпус. Повторите этап связей после обновления локального spaCy-сервиса.</div>}
-
-          {!tripletBusy && !tripletError && tripletData?.status === "ready" && <>
-            <div className={styles.tripletToolbar}>
-              <label className={styles.competitorSelect}><span>Сущность в центре связей</span><select value={tripletSeed} onChange={(event) => { setTripletSeed(event.target.value); setTripletEdgeLimit(TRIPLET_EDGE_PAGE_SIZE); }}><option value="all">Все связанные сущности · {integer.format(connectedTripletCandidates.length)}</option>{connectedTripletCandidates.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.label}{candidate.importance > 0 ? ` · ${number.format(candidate.importance)}%` : ""}</option>)}</select></label>
-              <div className={styles.tripletStats} aria-label="Сводка анализа связей"><span><b>{integer.format(tripletRelationCount)}</b> {pluralRu(tripletRelationCount, "связь", "связи", "связей")}</span><span><b>{integer.format(tripletProcessedSentenceCount)}</b>{tripletCorpusSentenceCount > tripletProcessedSentenceCount ? ` из ${integer.format(tripletCorpusSentenceCount)}` : ""} {pluralRu(tripletCorpusSentenceCount || tripletProcessedSentenceCount, "предложение", "предложения", "предложений")}</span><span><b>{integer.format(tripletCandidateCount)}</b> {pluralRu(tripletCandidateCount, "сущность", "сущности", "сущностей")}</span></div>
-            </div>
-            {tripletData.message && <div className={styles.tripletNotice}>{tripletData.message}</div>}
-            {tripletIncompleteCorpus && <div className={styles.tripletTruncated}>Сервис сообщил, что обработал не весь сохранённый корпус. В таблице показаны все полученные связи; повторите этап после обновления локального spaCy-сервиса.</div>}
-            <div className={styles.tripletGraph} role="list" aria-label="Семантические связи между сущностями">
-              {visibleTripletEdges.map((edge) => <article className={styles.tripletEdge} role="listitem" key={edge.id}>
-                <div className={styles.tripletPath}>
-                  <strong className={styles.tripletNode}>{edge.sourceLabel}</strong>
-                  <span className={styles.tripletPredicate}><i aria-hidden="true">→</i><b>{edge.negated && <em>не</em>}{edge.predicate}</b><i aria-hidden="true">→</i></span>
-                  <strong className={`${styles.tripletNode} ${styles.tripletTarget}`}>{edge.targetLabel}</strong>
-                </div>
-                <div className={styles.tripletEvidence}>
-                  <span><b>{integer.format(edge.occurrences)}</b> {pluralRu(edge.occurrences, "упоминание", "упоминания", "упоминаний")}</span><span><b>{integer.format(edge.documentCount)}</b> {pluralRu(edge.documentCount, "документ", "документа", "документов")}</span>
-                  <div className={styles.tripletDocuments}>{(Array.isArray(edge.documents) ? edge.documents : []).slice(0, 5).map((document) => document.url ? <a key={document.id} href={document.url} target="_blank" rel="noreferrer" title={document.name}>{document.ours ? "Наша страница" : hostLabel(document.url)}</a> : <span key={document.id}>{document.ours ? "Наша страница" : document.name}</span>)}</div>
-                  {!!edge.examples?.length && <details className={styles.tripletExamples}><summary>Примеры · {integer.format(edge.examples.length)}</summary><div>{edge.examples.slice(0, 3).map((example) => <blockquote key={example.sentenceId}><p>{example.text}</p><cite>{example.ours ? "Наша страница" : example.documentName}</cite></blockquote>)}</div></details>}
-                </div>
-              </article>)}
-              {!visibleTripletEdges.length && <div className={styles.tripletEmptyState}><strong>У выбранной сущности нет подтверждённых связей</strong><p>Выберите другую сущность или покажите все связи.</p></div>}
-            </div>
-            {filteredTripletEdges.length > visibleTripletEdges.length && <div className={styles.tripletMore}><button type="button" onClick={() => setTripletEdgeLimit((value) => value + TRIPLET_EDGE_PAGE_SIZE)}>Показать ещё <span>+{integer.format(Math.min(TRIPLET_EDGE_PAGE_SIZE, filteredTripletEdges.length - visibleTripletEdges.length))}</span><small>Показано {integer.format(visibleTripletEdges.length)} из {integer.format(filteredTripletEdges.length)}</small></button></div>}
-          </>}
-        </section>
-
         <section className={styles.reportSection}>
-          <div className={styles.sectionHead}><div><span className={styles.sectionIndex}>05</span><h2>Сравнение документов по метрикам</h2><p>Документы отсортированы по TF-IDF входных ключей. Взвешенная плотность показывает выполнение ориентиров по вхождениям важных лемм и фраз.</p></div></div>
+          <div className={styles.sectionHead}><div><span className={styles.sectionIndex}>04</span><div className={styles.titleWithHelp}><h2>Сравнение документов по метрикам</h2><HelpTip text="Сопоставление вашей страницы с каждым принятым конкурентом по одинаковым метрикам." /></div><p>Кликните по названию колонки, чтобы сравнить документы по нужной метрике. Взвешенная плотность показывает выполнение ориентиров по вхождениям важных лемм и фраз.</p></div></div>
           <div className={styles.documentTable} role="table" aria-label="Сравнение документов по метрикам">
-            <div className={styles.documentHeader} role="row"><span>SERP</span><span>Документ</span><span>TF-IDF ключей</span><span>Взвешенный охват</span><span>Взвешенная плотность</span><span>Слов</span></div>
-            {result.documents.map((doc, index) => <div className={`${styles.documentRow} ${doc.ours ? styles.ownDocument : ""}`} role="row" key={`${doc.url}-${index}`}><span className={styles.serpPosition}>{doc.ours ? "—" : doc.position ?? "—"}</span><div className={styles.documentName}><strong>{doc.ours ? "Наша страница" : doc.title || doc.name}</strong>{doc.url ? <a href={doc.url} target="_blank" rel="noreferrer">{hostLabel(doc.url)}</a> : <span>вставленный текст</span>}{doc.truncated && <em>частично загружена</em>}</div><div className={styles.docValue}><b>{percent(doc.keyTfidfScore)}</b><small>сырой вес {number.format(doc.keyTfidfRaw)}</small></div><div className={styles.docValue}><b>{percent(doc.weightedCoverage)}</b><small>важные термины и фразы</small></div><div className={styles.docValue}><b>{percent(doc.weightedDensity)}</b><small>выполнение ориентиров</small></div><div className={styles.docValue}><b>{integer.format(doc.words)}</b><small>{integer.format(doc.uniqueTerms)} уникальных</small></div></div>)}
+            <div className={styles.documentHeader} role="row"><DocumentSortableHeader label="SERP" sortKey="position" state={documentSort} onSort={setDocumentSort} numeric /><DocumentSortableHeader label="Документ" sortKey="name" state={documentSort} onSort={setDocumentSort} /><DocumentSortableHeader label="TF-IDF ключей" sortKey="keyTfidfScore" state={documentSort} onSort={setDocumentSort} numeric /><DocumentSortableHeader label="Взвешенный охват" sortKey="weightedCoverage" state={documentSort} onSort={setDocumentSort} numeric /><DocumentSortableHeader label="Взвешенная плотность" sortKey="weightedDensity" state={documentSort} onSort={setDocumentSort} numeric /><DocumentSortableHeader label="Слов" sortKey="words" state={documentSort} onSort={setDocumentSort} numeric /></div>
+            {sortedDocuments.map((doc, index) => <div className={`${styles.documentRow} ${doc.ours ? styles.ownDocument : ""}`} role="row" key={`${doc.url}-${index}`}><span className={styles.serpPosition}>{doc.ours ? "—" : doc.position ?? "—"}</span><div className={styles.documentName}><strong>{doc.ours ? "Наша страница" : doc.title || doc.name}</strong>{doc.url ? <a href={doc.url} target="_blank" rel="noreferrer">{hostLabel(doc.url)}</a> : <span>вставленный текст</span>}{doc.truncated && <em>частично загружена</em>}</div><div className={styles.docValue}><b>{percent(doc.keyTfidfScore)}</b><small>сырой вес {number.format(doc.keyTfidfRaw)}</small></div><div className={styles.docValue}><b>{percent(doc.weightedCoverage)}</b><small>важные термины и фразы</small></div><div className={styles.docValue}><b>{percent(doc.weightedDensity)}</b><small>выполнение ориентиров</small></div><div className={styles.docValue}><b>{integer.format(doc.words)}</b><small>{integer.format(doc.uniqueTerms)} уникальных</small></div></div>)}
           </div>
         </section>
 
         <section className={styles.reportSection}>
-          <div className={styles.sectionHead}><div><span className={styles.sectionIndex}>06</span><h2>Количество слов</h2><p>Рекомендуемый диапазон — центральные 50% конкурентов.</p></div><div className={styles.rangeSummary}><span>Рекомендуемый диапазон</span><b>{integer.format(result.summary.recommendedMin)}–{integer.format(result.summary.recommendedMax)}</b></div></div>
+          <div className={styles.sectionHead}><div><span className={styles.sectionIndex}>05</span><div className={styles.titleWithHelp}><h2>Количество слов</h2><HelpTip text="Диапазон Q25–Q75 отбрасывает крайние короткие и длинные страницы и показывает центральные 50% конкурентов." /></div><p>Рекомендуемый диапазон — центральные 50% конкурентов.</p></div><div className={styles.rangeSummary}><span>Рекомендуемый диапазон</span><b>{integer.format(result.summary.recommendedMin)}–{integer.format(result.summary.recommendedMax)}</b></div></div>
           <div className={styles.wordChart}><div className={styles.wordRange}><strong>Q25–Q75</strong><div><i style={{ left: `${result.summary.recommendedMin / wordMax * 100}%`, width: `${Math.max(0, result.summary.recommendedMax - result.summary.recommendedMin) / wordMax * 100}%` }} /></div><b>{integer.format(result.summary.recommendedMin)}–{integer.format(result.summary.recommendedMax)}</b></div>{result.documents.slice(0, 12).map((doc, index) => <div className={`${styles.wordRow} ${doc.ours ? styles.wordOwn : ""}`} key={`${doc.url}-words-${index}`}><strong title={doc.title || doc.name}>{doc.ours ? "Наша страница" : `${doc.position ? `${doc.position}. ` : ""}${hostLabel(doc.url)}`}</strong><div><i style={{ width: `${doc.words / wordMax * 100}%` }} /></div><b>{integer.format(doc.words)}</b></div>)}</div>
         </section>
 
-        <details className={styles.methodology}><summary>Методика расчёта</summary><div><p>Метрики вычисляются локально по собранному мультиязычному корпусу и входным ключам.</p>{Object.values(result.methodology || {}).filter((value): value is string => typeof value === "string" && Boolean(value.trim())).map((description, index) => <p key={`${index}-${description}`}>{description}</p>)}</div></details>
-        <footer className={styles.footer}><Image src="/seomeat-logo.svg" alt="SEO Meat" width={152} height={16} /><span>БАР · Сделано в школе SEO Мясо</span><div className={styles.footerLinks}><a href="https://seomeat.ru/" target="_blank" rel="noreferrer">Школа ↗</a><a href="https://t.me/seokotenkov" target="_blank" rel="noreferrer">Создатель ↗</a></div></footer>
+        <section className={`${styles.reportSection} ${styles.briefSection}`} aria-labelledby="page-brief-heading">
+          <div className={styles.sectionHead}><div><span className={styles.sectionIndex}>06</span><div className={styles.titleWithHelp}><h2 id="page-brief-heading">ТЗ для страницы</h2><HelpTip text="Готовый список правок можно вставить в редактор, задачу или передать другому агенту." /></div><p>Готовый Markdown сгруппирован по HTML-зонам. В каждой зоне сначала идут фразы, затем отдельные леммы; строки в рекомендуемом диапазоне не добавляются.</p></div><button className={styles.copyBrief} type="button" title="Скопировать всё ТЗ в формате Markdown" onClick={() => void copyPageBrief()} aria-live="polite">{briefCopied ? "Скопировано ✓" : "Копировать MD"}</button></div>
+          <pre className={styles.briefMarkdown}><code>{pageBrief}</code></pre>
+        </section>
+
+        <details className={styles.methodology} title="Краткие определения показателей отчёта без публикации внутренних коэффициентов"><summary>Методика расчёта</summary><div><p>Метрики вычисляются локально по собранному мультиязычному корпусу и входным ключам.</p>{Object.values(result.methodology || {}).filter((value): value is string => typeof value === "string" && Boolean(value.trim())).map((description, index) => <p key={`${index}-${description}`}>{description}</p>)}</div></details>
+        <footer className={styles.footer}><a className={styles.footerBrand} href="https://seomeat.ru/" target="_blank" rel="noreferrer" aria-label="Школа SEO Мясо"><Image src="/seomeat-logo.svg" alt="SEO Meat" width={152} height={16} /><span>БАР · Сделано в школе SEO Мясо</span></a><div className={styles.footerLinks}><a href="https://seomeat.ru/" target="_blank" rel="noreferrer">Школа ↗</a><a href="https://t.me/closedchannelkotenkov" target="_blank" rel="noreferrer">ТГК школы ↗</a><a href="https://t.me/seokotenkov" target="_blank" rel="noreferrer">Создатель ↗</a></div></footer>
       </section>}
     </div>
   </main>;

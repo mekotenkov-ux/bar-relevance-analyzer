@@ -35,9 +35,9 @@ Maintainers подтвердят получение, когда это буде�
 - Не коммитьте `.env*`, XMLRiver, Firecrawl и NLP credentials.
 - Передавайте production-секреты через secret manager, а не build artifact.
 - Добавьте authentication, rate limits, квоты и бюджет к платным API.
-- Не выставляйте встроенный `services/triplets-symbolic/server.py` напрямую в
+- Не выставляйте встроенный `services/phrase-embeddings/server.py` напрямую в
   интернет: он рассчитан на loopback и не имеет встроенной аутентификации.
-- Для удалённого spaCy используйте приватную сеть либо HTTPS reverse proxy с
+- Для удалённого E5 используйте приватную сеть либо HTTPS reverse proxy с
   аутентификацией, ограничением тела, очередью и firewall.
 - Считайте анализируемые URL, HTML и snapshots недоверенным вводом.
 - Не записывайте ключи и полный текст пользовательских страниц в логи.

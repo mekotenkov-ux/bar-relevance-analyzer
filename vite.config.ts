@@ -8,12 +8,28 @@ const SITE_CREATOR_PLACEHOLDER_DATABASE_ID =
 
 const { d1, r2 } = hostingConfig;
 
+// Wrangler exposes values from `.dev.vars` to the Worker automatically, but
+// operational (non-secret) local service settings are also convenient to pass
+// from the shell. Promote only the known E5 settings instead of forwarding the
+// complete host environment into the Worker.
+const localRuntimeVars = Object.fromEntries(
+  [
+    "PHRASE_EMBEDDINGS_URL",
+    "PHRASE_EMBEDDINGS_TIMEOUT_MS",
+    "PHRASE_EMBEDDINGS_CHUNK_SIZE",
+  ].flatMap((name) => {
+    const value = process.env[name]?.trim();
+    return value ? [[name, value]] : [];
+  }),
+);
+
 // macOS Seatbelt blocks FSEvents, so Codex previews need polling for HMR.
 const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
 
 const localBindingConfig = {
   main: "./worker/index.ts",
   compatibility_flags: ["nodejs_compat"],
+  vars: localRuntimeVars,
   d1_databases: d1
     ? [
         {

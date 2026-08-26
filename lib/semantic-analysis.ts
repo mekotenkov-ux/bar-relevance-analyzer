@@ -1,5 +1,10 @@
 import snowballFactory from "snowball-stemmers";
 import * as stopwordModule from "stopword";
+import type { PhraseSimilarityProvider, PhraseSimilarityResult } from "./phrase-similarity";
+import { LANGUAGE_CONFIGS } from "./language-support";
+import { initializeRussianMorphology, russianLemma } from "./russian-morphology";
+
+export { LANGUAGE_CONFIGS } from "./language-support";
 
 export type PageInput = { name?: string; url?: string; text?: string; position?: number; title?: string };
 export type SearchContext = {
@@ -19,6 +24,21 @@ export type CorpusSnapshot = {
   competitors: SerializedDocument[];
   own: SerializedDocument;
   warnings: AnalysisWarning[];
+  phraseSimilarity?: SnapshotPhraseSimilarity;
+};
+
+type SnapshotPhraseSimilarity = {
+  version: 1;
+  engine: "e5";
+  model: string;
+  revision?: string;
+  queries: string[];
+  rows: Array<[key: string, label: string, score: number, bestQueryIndex: number]>;
+};
+
+type AnalyzeDependencies = {
+  phraseSimilarity?: PhraseSimilarityProvider;
+  assetOrigin?: string;
 };
 
 export type AnalyzeRequest = {
@@ -30,10 +50,8 @@ export type AnalyzeRequest = {
   competitors?: PageInput[];
   snapshot?: CorpusSnapshot;
   search?: SearchContext;
-  useFirecrawl?: boolean;
   stopWords?: string | string[];
   stopPhrases?: string | string[];
-  tripletsEnabled?: boolean;
 };
 
 type WarningCode = "fetch_failed" | "low_quality" | "corpus_anomaly" | "analysis_failed";
@@ -48,6 +66,18 @@ type AnalysisWarning = {
 type Token = { surface: string; key: string; stop: boolean; meaningful: boolean };
 type FormCounts = Map<string, Map<string, number>>;
 type PhraseForms = Map<string, Map<string, number>>;
+type NgramNestingCount = {
+  total: number;
+  standalone: number;
+  parents: Map<string, number>;
+};
+type NgramNestingCounts = Map<string, NgramNestingCount>;
+type SerializedNgramNestingCounts = Array<[
+  key: string,
+  total: number,
+  standalone: number,
+  parents: Array<[key: string, count: number]>,
+]>;
 export const ANALYSIS_ZONES = ["all", "title", "h1", "headings", "text", "anchors"] as const;
 export type AnalysisZone = typeof ANALYSIS_ZONES[number];
 type PreparedZones = Record<AnalysisZone, { available: boolean; blocks: string[] }>;
@@ -58,11 +88,13 @@ type ZoneAnalysis = {
   termCounts: Map<string, number>;
   termForms: FormCounts;
   ngramCounts: Map<string, number>;
+  ngramNesting: NgramNestingCounts;
 };
-type SerializedZoneAnalysis = Omit<ZoneAnalysis, "termCounts" | "termForms" | "ngramCounts"> & {
+type SerializedZoneAnalysis = Omit<ZoneAnalysis, "termCounts" | "termForms" | "ngramCounts" | "ngramNesting"> & {
   termCounts: Array<[string, number]>;
   termForms: Array<[string, Array<[string, number]>]>;
   ngramCounts: Array<[string, number]>;
+  ngramNesting: SerializedNgramNestingCounts;
 };
 type PreparedPage = {
   name: string;
@@ -77,12 +109,6 @@ type PreparedPage = {
   qualityScore: number;
   zones: PreparedZones;
 };
-export type SnapshotSentence = {
-  id: string;
-  text: string;
-  tokenKeys: string[];
-  tokenCount: number;
-};
 type DocumentAnalysis = {
   name: string;
   url: string;
@@ -96,22 +122,21 @@ type DocumentAnalysis = {
   truncated: boolean;
   source: "http" | "firecrawl" | "text";
   qualityScore: number;
-  sentenceCorpus: SnapshotSentence[];
-  sentenceCorpusTruncated: boolean;
   termCounts: Map<string, number>;
   termForms: FormCounts;
   ngramCounts: Map<string, number>;
   ngramForms: PhraseForms;
+  ngramNesting: NgramNestingCounts;
   zones: Record<AnalysisZone, ZoneAnalysis>;
 };
-type SerializedDocument = Omit<DocumentAnalysis, "termCounts" | "termForms" | "ngramCounts" | "ngramForms" | "zones"> & {
+type SerializedDocument = Omit<DocumentAnalysis, "termCounts" | "termForms" | "ngramCounts" | "ngramForms" | "ngramNesting" | "zones"> & {
   termCounts: Array<[string, number]>;
   termForms: Array<[string, Array<[string, number]>]>;
   ngramCounts: Array<[string, number]>;
   ngramForms: Array<[string, Array<[string, number]>]>;
+  ngramNesting: SerializedNgramNestingCounts;
   zones: Record<AnalysisZone, SerializedZoneAnalysis>;
 };
-type LanguageConfig = { label: string; stemmer?: string; stopwords?: string };
 type BaseRow = {
   key: string;
   label: string;
@@ -142,19 +167,9 @@ const MAX_QUERIES = 20;
 const MAX_QUERY_LENGTH = 160;
 const SNAPSHOT_TERMS = 4_000;
 const SNAPSHOT_NGRAMS = 6_000;
+const SNAPSHOT_NGRAM_PARENTS_PER_KEY = 20;
 const SNAPSHOT_VERSION = 5;
-// Sentence corpora are reused by the optional local syntax analysis. Keep a
-// high per-document integrity guard, but do not reduce normal pages to a small
-// representative sample: the source page is already bounded by MAX_TEXT_LENGTH.
-const SNAPSHOT_SENTENCES_PER_DOCUMENT = 5_000;
-const SNAPSHOT_SENTENCE_TOKENS_PER_DOCUMENT = 80_000;
-const SNAPSHOT_SENTENCE_MAX_CHARACTERS = 1_000;
-const SNAPSHOT_SENTENCES_TOTAL_BASE = 10_000;
-const SNAPSHOT_SENTENCES_PER_SOURCE = 5_000;
-const SNAPSHOT_SENTENCES_TOTAL_MAXIMUM = 100_000;
-const SNAPSHOT_SENTENCE_TOKENS_TOTAL_BASE = 160_000;
-const SNAPSHOT_SENTENCE_TOKENS_PER_SOURCE = 80_000;
-const SNAPSHOT_SENTENCE_TOKENS_TOTAL_MAXIMUM = 4_000_000;
+const SNAPSHOT_PHRASE_SIMILARITIES_MAXIMUM = 100_000;
 const SNAPSHOT_COMPETITORS_MAXIMUM = 500;
 const SNAPSHOT_FORMS_PER_KEY = 5;
 const SNAPSHOT_KEY_MAX_CHARACTERS = 256;
@@ -166,55 +181,9 @@ const TERM_ALIASES: Record<string, Record<string, string>> = {
 };
 const canonicalAliasDisplayCache = new Map<string, Map<string, string>>();
 
-export const LANGUAGE_CONFIGS: Record<string, LanguageConfig> = {
-  ar: { label: "العربية", stemmer: "arabic", stopwords: "ara" },
-  hy: { label: "Հայերեն", stemmer: "armenian", stopwords: "hye" },
-  eu: { label: "Euskara", stemmer: "basque", stopwords: "eus" },
-  bg: { label: "Български", stopwords: "bul" },
-  ca: { label: "Català", stemmer: "catalan", stopwords: "cat" },
-  zh: { label: "中文", stopwords: "zho" },
-  hr: { label: "Hrvatski", stopwords: "hrv" },
-  cs: { label: "Čeština", stemmer: "czech", stopwords: "ces" },
-  da: { label: "Dansk", stemmer: "danish", stopwords: "dan" },
-  nl: { label: "Nederlands", stemmer: "dutch", stopwords: "nld" },
-  en: { label: "English", stemmer: "english", stopwords: "eng" },
-  et: { label: "Eesti", stopwords: "est" },
-  fi: { label: "Suomi", stemmer: "finnish", stopwords: "fin" },
-  fr: { label: "Français", stemmer: "french", stopwords: "fra" },
-  de: { label: "Deutsch", stemmer: "german", stopwords: "deu" },
-  el: { label: "Ελληνικά", stopwords: "ell" },
-  he: { label: "עברית", stopwords: "heb" },
-  hi: { label: "हिन्दी", stopwords: "hin" },
-  hu: { label: "Magyar", stemmer: "hungarian", stopwords: "hun" },
-  id: { label: "Bahasa Indonesia", stopwords: "ind" },
-  ga: { label: "Gaeilge", stemmer: "irish", stopwords: "gle" },
-  it: { label: "Italiano", stemmer: "italian", stopwords: "ita" },
-  ja: { label: "日本語", stopwords: "jpn" },
-  ko: { label: "한국어", stopwords: "kor" },
-  lv: { label: "Latviešu", stopwords: "lav" },
-  lt: { label: "Lietuvių", stopwords: "lit" },
-  no: { label: "Norsk", stemmer: "norwegian", stopwords: "nob" },
-  fa: { label: "فارسی", stopwords: "fas" },
-  pl: { label: "Polski", stopwords: "pol" },
-  pt: { label: "Português", stemmer: "portuguese", stopwords: "por" },
-  ro: { label: "Română", stemmer: "romanian", stopwords: "ron" },
-  ru: { label: "Русский", stemmer: "russian", stopwords: "rus" },
-  sr: { label: "Српски", stopwords: "srp" },
-  sk: { label: "Slovenčina", stopwords: "slk" },
-  sl: { label: "Slovenščina", stemmer: "slovene", stopwords: "slv" },
-  es: { label: "Español", stemmer: "spanish", stopwords: "spa" },
-  sw: { label: "Kiswahili", stopwords: "swa" },
-  sv: { label: "Svenska", stemmer: "swedish", stopwords: "swe" },
-  ta: { label: "தமிழ்", stemmer: "tamil" },
-  th: { label: "ไทย", stopwords: "tha" },
-  tr: { label: "Türkçe", stemmer: "turkish", stopwords: "tur" },
-  uk: { label: "Українська", stopwords: "ukr" },
-  ur: { label: "اردو", stopwords: "urd" },
-  vi: { label: "Tiếng Việt", stopwords: "vie" },
-};
-
 const stopwordExports = stopwordModule as unknown as Record<string, readonly string[]>;
-const stopwordCache = new Map<string, Set<string>>();
+type LanguageStopwords = { single: Set<string>; phrases: string[][] };
+const stopwordCache = new Map<string, LanguageStopwords>();
 const stemmerCache = new Map<string, { stem: (value: string) => string }>();
 
 function normalizeSurface(value: string, language: string) {
@@ -229,7 +198,22 @@ function languageStopwords(language: string) {
   if (cached) return cached;
   const exportName = LANGUAGE_CONFIGS[language]?.stopwords;
   const words = exportName ? stopwordExports[exportName] ?? [] : [];
-  const result = new Set(words.map((word) => normalizeSurface(String(word), language)).filter(Boolean));
+  const result: LanguageStopwords = { single: new Set<string>(), phrases: [] };
+  const seenPhrases = new Set<string>();
+  for (const word of words) {
+    const parts = segmentWords(String(word), language)
+      .map((part) => normalizeSurface(part, language))
+      .filter(Boolean);
+    if (parts.length === 1) {
+      result.single.add(parts[0]);
+      continue;
+    }
+    if (parts.length < 2) continue;
+    const identity = parts.join("\u0000");
+    if (seenPhrases.has(identity)) continue;
+    seenPhrases.add(identity);
+    result.phrases.push(parts);
+  }
   stopwordCache.set(language, result);
   return result;
 }
@@ -263,6 +247,10 @@ function termKey(surface: string, language: string) {
   // SEO is commonly typed with visually identical Latin/Cyrillic letters. Keep
   // the original surface form for display, but merge only this narrow acronym.
   if (/^[sс][eе][oо]$/u.test(canonicalSurface)) return "seo";
+  if (language === "ru" && tokenLength(canonicalSurface) > 1 && /^\p{L}+$/u.test(canonicalSurface)) {
+    const lemma = normalizeSurface(russianLemma(canonicalSurface), language) || canonicalSurface;
+    return TERM_ALIASES[language]?.[lemma] ?? lemma;
+  }
   const stemmer = languageStemmer(language);
   if (!stemmer || tokenLength(canonicalSurface) <= 3 || !/^\p{L}+$/u.test(canonicalSurface)) return canonicalSurface;
   try { return stemmer.stem(canonicalSurface) || canonicalSurface; }
@@ -275,7 +263,7 @@ function tokenize(text: string, language: string) {
     const surface = normalizeSurface(raw, language);
     if (!surface) return null;
     const meaningful = oneCharacterWordsAllowed(language) ? tokenLength(surface) >= 1 : tokenLength(surface) > 1;
-    return { surface, key: termKey(surface, language), stop: stopwords.has(surface), meaningful };
+    return { surface, key: termKey(surface, language), stop: stopwords.single.has(surface), meaningful };
   }).filter((token): token is Token => Boolean(token));
 }
 
@@ -320,32 +308,79 @@ function countTerms(tokens: Token[]) {
   return { counts, forms };
 }
 
+function ngramAt(tokens: Token[], index: number, size: number) {
+  if (index < 0 || index + size > tokens.length) return null;
+  const slice = tokens.slice(index, index + size);
+  if (slice.some((token) => token.stop || !token.meaningful || /^\d+$/u.test(token.surface))) return null;
+  if (new Set(slice.map((token) => token.key)).size === 1) return null;
+  return {
+    key: slice.map((token) => token.key).join(" "),
+    surface: slice.map((token) => token.surface).join(" "),
+  };
+}
+
+function mergeNgramNesting(target: NgramNestingCounts, source: NgramNestingCounts) {
+  for (const [key, evidence] of source) {
+    const combined = target.get(key) ?? { total: 0, standalone: 0, parents: new Map<string, number>() };
+    combined.total += evidence.total;
+    combined.standalone += evidence.standalone;
+    for (const [parent, count] of evidence.parents) increment(combined.parents, parent, count);
+    target.set(key, combined);
+  }
+}
+
 function countNgrams(tokens: Token[]) {
   const counts = new Map<string, number>();
   const forms: PhraseForms = new Map();
+  const nesting: NgramNestingCounts = new Map();
   for (let size = 2; size <= 3; size += 1) {
     for (let index = 0; index <= tokens.length - size; index += 1) {
-      const slice = tokens.slice(index, index + size);
-      if (slice.some((token) => token.stop || !token.meaningful || /^\d+$/u.test(token.surface))) continue;
-      if (new Set(slice.map((token) => token.key)).size === 1) continue;
-      const key = slice.map((token) => token.key).join(" ");
-      const surface = slice.map((token) => token.surface).join(" ");
-      increment(counts, key);
-      addForm(forms, key, surface);
+      const current = ngramAt(tokens, index, size);
+      if (!current) continue;
+      increment(counts, current.key);
+      addForm(forms, current.key, current.surface);
+      if (size !== 2) continue;
+
+      const evidence = nesting.get(current.key) ?? { total: 0, standalone: 0, parents: new Map<string, number>() };
+      evidence.total += 1;
+      const parentKeys = new Set<string>();
+      const leftParent = ngramAt(tokens, index - 1, 3);
+      const rightParent = ngramAt(tokens, index, 3);
+      if (leftParent) parentKeys.add(leftParent.key);
+      if (rightParent) parentKeys.add(rightParent.key);
+      if (!parentKeys.size) evidence.standalone += 1;
+      for (const parentKey of parentKeys) increment(evidence.parents, parentKey);
+      nesting.set(current.key, evidence);
     }
   }
-  return { counts, forms };
+  return { counts, forms, nesting };
+}
+
+function sentenceBlocks(block: string, language: string) {
+  try {
+    return [...new Intl.Segmenter(language, { granularity: "sentence" }).segment(block)]
+      .map((part) => part.segment.trim())
+      .filter(Boolean);
+  } catch {
+    return block.split(/(?<=[.!?…])\s+|[\r\n]+/u).map((part) => part.trim()).filter(Boolean);
+  }
 }
 
 function countNgramBlocks(blocks: string[], language: string) {
   const counts = new Map<string, number>();
   const forms: PhraseForms = new Map();
+  const nesting: NgramNestingCounts = new Map();
   for (const block of blocks) {
-    const current = countNgrams(tokenize(block, language));
-    for (const [key, count] of current.counts) increment(counts, key, count);
-    mergeForms(forms, current.forms);
+    // N-grams are positional evidence inside a sentence. Crossing a full stop
+    // would turn "Google Search. Console ..." into a false parent phrase.
+    for (const sentence of sentenceBlocks(block, language)) {
+      const current = countNgrams(tokenize(sentence, language));
+      for (const [key, count] of current.counts) increment(counts, key, count);
+      mergeForms(forms, current.forms);
+      mergeNgramNesting(nesting, current.nesting);
+    }
   }
-  return { counts, forms };
+  return { counts, forms, nesting };
 }
 
 function mergeForms(target: FormCounts, source: FormCounts) {
@@ -752,91 +787,6 @@ function sentenceCount(text: string, language: string) {
   catch { return (text.match(/[.!?…]+(?=\s|$)/g) ?? []).length; }
 }
 
-function sentenceSegments(text: string, language: string) {
-  try {
-    return [...new Intl.Segmenter(language, { granularity: "sentence" }).segment(text)]
-      .map((part) => part.segment.replace(/\s+/g, " ").trim())
-      .filter(Boolean);
-  } catch {
-    return (text.match(/[^.!?\u2026]+(?:[.!?\u2026]+|$)/gu) ?? [])
-      .map((part) => part.replace(/\s+/g, " ").trim())
-      .filter(Boolean);
-  }
-}
-
-function boundedSentenceCorpus(blocks: string[], language: string) {
-  const sentences: SnapshotSentence[] = [];
-  const seen = new Set<string>();
-  let storedTokens = 0;
-  for (const block of blocks) {
-    for (const rawSentence of sentenceSegments(block, language)) {
-      if (sentences.length >= SNAPSHOT_SENTENCES_PER_DOCUMENT || storedTokens >= SNAPSHOT_SENTENCE_TOKENS_PER_DOCUMENT) {
-        return { sentences, truncated: true };
-      }
-      const text = rawSentence.length <= SNAPSHOT_SENTENCE_MAX_CHARACTERS
-        ? rawSentence
-        : rawSentence.slice(0, SNAPSHOT_SENTENCE_MAX_CHARACTERS).replace(/\s+\S*$/u, "").trim();
-      if (!text) continue;
-      let normalized: string;
-      try { normalized = text.normalize("NFKC").toLocaleLowerCase(language).replace(/\s+/g, " "); }
-      catch { normalized = text.normalize("NFKC").toLowerCase().replace(/\s+/g, " "); }
-      if (seen.has(normalized)) continue;
-      const tokens = tokenize(text, language);
-      if (contentTokens(tokens).length < 2 || !tokens.length) continue;
-      const remainingTokens = SNAPSHOT_SENTENCE_TOKENS_PER_DOCUMENT - storedTokens;
-      if (tokens.length > remainingTokens) return { sentences, truncated: true };
-      seen.add(normalized);
-      storedTokens += tokens.length;
-      sentences.push({
-        id: `s${sentences.length + 1}`,
-        text,
-        tokenKeys: tokens.map((token) => token.key),
-        tokenCount: tokens.length,
-      });
-    }
-  }
-  return { sentences, truncated: false };
-}
-
-function globallyBoundSentenceCorpora(documents: DocumentAnalysis[]) {
-  const bounded = documents.map((document) => ({ ...document, sentenceCorpus: [] as SnapshotSentence[] }));
-  const cursors = documents.map(() => 0);
-  // Scale with the corpus actually accepted into the report. For ordinary
-  // SERPs these limits are at least the sum of all per-document limits, so no
-  // 2,500-sentence representative slice is applied. Absolute guards still
-  // protect snapshot recalculation from hostile browser-owned payloads.
-  const sentenceLimit = Math.min(
-    SNAPSHOT_SENTENCES_TOTAL_MAXIMUM,
-    Math.max(SNAPSHOT_SENTENCES_TOTAL_BASE, documents.length * SNAPSHOT_SENTENCES_PER_SOURCE),
-  );
-  const tokenLimit = Math.min(
-    SNAPSHOT_SENTENCE_TOKENS_TOTAL_MAXIMUM,
-    Math.max(SNAPSHOT_SENTENCE_TOKENS_TOTAL_BASE, documents.length * SNAPSHOT_SENTENCE_TOKENS_PER_SOURCE),
-  );
-  let storedSentences = 0;
-  let storedTokens = 0;
-  while (storedSentences < sentenceLimit && storedTokens < tokenLimit) {
-    let added = false;
-    for (let index = 0; index < documents.length; index += 1) {
-      if (storedSentences >= sentenceLimit || storedTokens >= tokenLimit) break;
-      const sentence = documents[index].sentenceCorpus[cursors[index]];
-      cursors[index] += 1;
-      if (!sentence) continue;
-      if (storedTokens + sentence.tokenCount > tokenLimit) continue;
-      bounded[index].sentenceCorpus.push(sentence);
-      storedSentences += 1;
-      storedTokens += sentence.tokenCount;
-      added = true;
-    }
-    if (!added) break;
-  }
-  bounded.forEach((document, index) => {
-    document.sentenceCorpusTruncated = document.sentenceCorpusTruncated
-      || document.sentenceCorpus.length < documents[index].sentenceCorpus.length;
-  });
-  return bounded;
-}
-
 function analyzePrepared(input: PreparedPage, language: string): DocumentAnalysis {
   const zoneNgrams = Object.fromEntries(ANALYSIS_ZONES.map((zone) =>
     [zone, countNgramBlocks(input.zones[zone].blocks, language)])) as Record<AnalysisZone, ReturnType<typeof countNgramBlocks>>;
@@ -852,6 +802,7 @@ function analyzePrepared(input: PreparedPage, language: string): DocumentAnalysi
       termCounts: terms.counts,
       termForms: terms.forms,
       ngramCounts: zoneNgrams[zone].counts,
+      ngramNesting: zoneNgrams[zone].nesting,
     } satisfies ZoneAnalysis];
   })) as Record<AnalysisZone, ZoneAnalysis>;
   const allZone = analyzedZones.all;
@@ -859,16 +810,100 @@ function analyzePrepared(input: PreparedPage, language: string): DocumentAnalysi
   const content = contentTokens(tokens);
   if (content.length < 20) throw new Error("Недостаточно содержательных слов для анализа");
   const ngrams = zoneNgrams.all;
-  const sentenceCorpus = boundedSentenceCorpus(input.zones.all.blocks, language);
   return {
     name: input.name, url: input.url, position: input.position, title: input.title,
     wordCount: tokens.length, contentWordCount: content.length, uniqueTerms: allZone.termCounts.size,
     headings: input.headings, sentences: sentenceCount(input.zones.all.blocks.join("\n"), language), truncated: input.truncated,
     source: input.source, qualityScore: input.qualityScore,
-    sentenceCorpus: sentenceCorpus.sentences, sentenceCorpusTruncated: sentenceCorpus.truncated,
     termCounts: allZone.termCounts, termForms: allZone.termForms, ngramCounts: ngrams.counts, ngramForms: ngrams.forms,
+    ngramNesting: ngrams.nesting,
     zones: analyzedZones,
   };
+}
+
+const LATIN_LANGUAGE_CANDIDATES = Object.freeze([
+  "eu", "ca", "hr", "cs", "da", "nl", "en", "et", "fi", "fr", "de",
+  "hu", "id", "ga", "it", "lv", "lt", "no", "pl", "pt", "ro", "sr",
+  "sk", "sl", "es", "sw", "sv", "tr", "vi",
+]);
+
+const DETECTION_CHARACTER_HINTS: Readonly<Record<string, readonly [RegExp, number][]>> = Object.freeze({
+  uk: [[/[іїєґ]/giu, 8]],
+  sr: [[/[јљњћђџ]/giu, 8]],
+  bg: [[/[ѝ]/giu, 10], [/[ъ]/giu, 1.25]],
+  ru: [[/[ыэё]/giu, 4]],
+  fa: [[/[پچژگ]/gu, 8], [/[کی]/gu, .8]],
+  ur: [[/[ٹڈڑںھہۓے]/gu, 9]],
+  vi: [[/[ăâđêôơư]/giu, 5], [/[ạảấầẩẫậắằẳẵặẹẻẽếềểễệỉịọỏốồổỗộớờởỡợụủứừửữựỳỵỷỹ]/giu, 3]],
+  tr: [[/[ğışİ]/gu, 5]],
+  ro: [[/[ăîșț]/giu, 5]],
+  pl: [[/[ąćęłńśźż]/giu, 5]],
+  cs: [[/[ěščřůďťň]/giu, 4]],
+  sk: [[/[äĺľôŕ]/giu, 5]],
+  hu: [[/[őű]/giu, 5]],
+  et: [[/[õ]/giu, 4]],
+  lv: [[/[āēģīķļņū]/giu, 5]],
+  lt: [[/[ąęėįųū]/giu, 5]],
+  de: [[/[ß]/giu, 7]],
+  es: [[/[ñ¿¡]/giu, 5]],
+  pt: [[/[ãõ]/giu, 5]],
+  da: [[/[æøå]/giu, 2]],
+  no: [[/[æøå]/giu, 2]],
+  sv: [[/[åäö]/giu, 2]],
+});
+
+// Serbian written in Latin is almost indistinguishable from Croatian by
+// character set alone. A short list of high-precision lexical contrasts keeps
+// auto mode useful without pretending that every mixed regional page is
+// unambiguous; HTML lang and the manual selector remain stronger signals.
+const DETECTION_WORD_HINTS: Readonly<Record<string, readonly string[]>> = Object.freeze({
+  sr: ["обука", "претрага", "вештина", "вештине", "решење", "тачно", "овде", "време", "obuka", "pretraga", "veština", "veštine", "rešenje", "tačno", "ovde", "vreme"],
+  hr: ["tečaj", "pretraživanje", "vještina", "vještine", "rješenje", "točno", "ovdje", "vrijeme"],
+});
+
+function regexpMatchCount(text: string, pattern: RegExp) {
+  return text.match(pattern)?.length ?? 0;
+}
+
+function stopwordEvidenceScore(words: string[], candidates: readonly string[], language: string) {
+  const normalized = words.map((word) => normalizeSurface(word, language)).filter(Boolean);
+  const stops = languageStopwords(language);
+  const candidateSets = candidates.map((candidate) => languageStopwords(candidate).single);
+  let score = 0;
+  for (const word of normalized) {
+    if (!stops.single.has(word)) continue;
+    const sharedBy = candidateSets.reduce((count, set) => count + Number(set.has(word)), 0);
+    score += 1 + Math.log((candidates.length + 1) / (sharedBy + 1));
+  }
+  for (const phrase of stops.phrases) {
+    if (phrase.length > normalized.length) continue;
+    for (let start = 0; start <= normalized.length - phrase.length; start += 1) {
+      if (phrase.every((part, offset) => normalized[start + offset] === part)) score += phrase.length * 2;
+    }
+  }
+  const hints = DETECTION_WORD_HINTS[language] ?? [];
+  if (hints.length) {
+    const hintSet = new Set(hints.map((word) => normalizeSurface(word, language)));
+    score += normalized.reduce((sum, word) => sum + (hintSet.has(word) ? 5 : 0), 0);
+  }
+  return score;
+}
+
+function characterEvidenceScore(text: string, language: string) {
+  return (DETECTION_CHARACTER_HINTS[language] ?? [])
+    .reduce((score, [pattern, weight]) => score + regexpMatchCount(text, pattern) * weight, 0);
+}
+
+function chooseDetectedLanguage(text: string, candidates: readonly string[], fallback: string) {
+  const words = (text.match(/\p{L}+(?:['’]\p{L}+)*/gu) ?? []).slice(0, 4_000);
+  let best = fallback;
+  let bestScore = stopwordEvidenceScore(words, candidates, fallback) + characterEvidenceScore(text, fallback);
+  for (const language of candidates) {
+    if (language === fallback) continue;
+    const score = stopwordEvidenceScore(words, candidates, language) + characterEvidenceScore(text, language);
+    if (score > bestScore) { best = language; bestScore = score; }
+  }
+  return best;
 }
 
 function detectLanguage(text: string, htmlLanguages: string[]) {
@@ -878,29 +913,42 @@ function detectLanguage(text: string, htmlLanguages: string[]) {
     for (const value of declared) increment(counts, value);
     return [...counts].sort((a, b) => b[1] - a[1])[0][0];
   }
-  if (/[іїєґ]/iu.test(text)) return "uk";
-  if (/\p{Script=Cyrl}/u.test(text)) return "ru";
-  if (/\p{Script=Arabic}/u.test(text)) return "ar";
-  if (/\p{Script=Armenian}/u.test(text)) return "hy";
-  if (/\p{Script=Greek}/u.test(text)) return "el";
-  if (/\p{Script=Hebrew}/u.test(text)) return "he";
-  if (/\p{Script=Devanagari}/u.test(text)) return "hi";
-  if (/\p{Script=Tamil}/u.test(text)) return "ta";
-  if (/\p{Script=Hangul}/u.test(text)) return "ko";
-  if (/\p{Script=Hiragana}|\p{Script=Katakana}/u.test(text)) return "ja";
-  if (/\p{Script=Han}/u.test(text)) return "zh";
-  if (/\p{Script=Thai}/u.test(text)) return "th";
 
-  const words = (text.toLowerCase().match(/\p{L}+/gu) ?? []).slice(0, 2_000);
-  const candidates = ["en", "de", "fr", "es", "it", "pt", "nl", "pl", "tr", "sv", "da", "fi", "ro", "cs"];
-  let best = "en";
-  let bestScore = 0;
-  for (const language of candidates) {
-    const stopwords = languageStopwords(language);
-    const score = words.reduce((sum, word) => sum + (stopwords.has(normalizeSurface(word, language)) ? 1 : 0), 0);
-    if (score > bestScore) { best = language; bestScore = score; }
+  const sample = text.slice(0, 120_000);
+  const kanaCount = regexpMatchCount(sample, /[\p{Script=Hiragana}\p{Script=Katakana}]/gu);
+  const hanCount = regexpMatchCount(sample, /\p{Script=Han}/gu);
+  const japaneseLikely = kanaCount >= 2 && kanaCount / Math.max(1, kanaCount + hanCount) >= .02;
+  const scriptGroups = [
+    { key: "cyrillic", count: regexpMatchCount(sample, /\p{Script=Cyrillic}/gu) },
+    { key: "arabic", count: regexpMatchCount(sample, /\p{Script=Arabic}/gu) },
+    { key: "armenian", count: regexpMatchCount(sample, /\p{Script=Armenian}/gu) },
+    { key: "greek", count: regexpMatchCount(sample, /\p{Script=Greek}/gu) },
+    { key: "hebrew", count: regexpMatchCount(sample, /\p{Script=Hebrew}/gu) },
+    { key: "devanagari", count: regexpMatchCount(sample, /\p{Script=Devanagari}/gu) },
+    { key: "tamil", count: regexpMatchCount(sample, /\p{Script=Tamil}/gu) },
+    { key: "hangul", count: regexpMatchCount(sample, /\p{Script=Hangul}/gu) },
+    { key: "japanese", count: japaneseLikely ? kanaCount + hanCount : 0 },
+    { key: "han", count: japaneseLikely ? 0 : hanCount },
+    { key: "thai", count: regexpMatchCount(sample, /\p{Script=Thai}/gu) },
+    { key: "latin", count: regexpMatchCount(sample, /\p{Script=Latin}/gu) },
+  ].sort((left, right) => right.count - left.count);
+
+  if (!scriptGroups[0]?.count) return "en";
+
+  switch (scriptGroups[0]?.key) {
+    case "cyrillic": return chooseDetectedLanguage(sample, ["uk", "sr", "bg", "ru"], "ru");
+    case "arabic": return chooseDetectedLanguage(sample, ["ur", "fa", "ar"], "ar");
+    case "armenian": return "hy";
+    case "greek": return "el";
+    case "hebrew": return "he";
+    case "devanagari": return "hi";
+    case "tamil": return "ta";
+    case "hangul": return "ko";
+    case "japanese": return "ja";
+    case "han": return "zh";
+    case "thai": return "th";
+    default: return chooseDetectedLanguage(sample, LATIN_LANGUAGE_CANDIDATES, "en");
   }
-  return best;
 }
 
 function parseQueries(payload: AnalyzeRequest) {
@@ -940,12 +988,22 @@ function parseCustomStops(payload: AnalyzeRequest, language: string) {
   }
 
   const phraseKeySequences: string[][] = [];
+  const phraseIdentities = new Set<string>();
+  const addPhraseSequence = (keys: string[]) => {
+    const identity = keys.join("\u0000");
+    if (!keys.length || phraseIdentities.has(identity)) return;
+    phraseIdentities.add(identity);
+    phraseKeySequences.push(keys);
+  };
+  for (const phrase of languageStopwords(language).phrases) {
+    addPhraseSequence(phrase.map((surface) => termKey(surface, language)));
+  }
   const canonicalPhrases = new Set<string>();
   for (const entry of stopEntries(payload.stopPhrases)) {
     const surfaces = segmentWords(entry, language).map((raw) => normalizeSurface(raw, language)).filter(Boolean);
     if (!surfaces.length) continue;
     const keys = surfaces.map((surface) => termKey(surface, language));
-    phraseKeySequences.push(keys);
+    addPhraseSequence(keys);
     canonicalPhrases.add(surfaces.join(" "));
   }
   return {
@@ -1052,12 +1110,246 @@ function localSemanticScore(label: string, key: string, occurrenceVector: number
   return { keySimilarity: Math.min(1, best), bestKeyword };
 }
 
+type NgramSemanticInput = Pick<BaseRow, "key" | "label" | "frequencies">;
+type NgramSemanticValue = { keySimilarity: number; bestKeyword: string };
+type NgramSemanticResolution = {
+  values: Map<string, NgramSemanticValue>;
+  source: "e5-service" | "e5-cache" | "local";
+  model?: string;
+  revision?: string;
+  coverage: number;
+  cache?: SnapshotPhraseSimilarity;
+  error?: string;
+};
+
+function sameQueries(left: string[], right: string[]) {
+  return left.length === right.length && left.every((query, index) => query === right[index]);
+}
+
+function exactKeyword(key: string, profiles: ReturnType<typeof keywordProfiles>) {
+  return profiles.find((profile) => profile.ngramKeys.has(key))?.keyword;
+}
+
+function localNgramSemantics(rows: NgramSemanticInput[], profiles: ReturnType<typeof keywordProfiles>, language: string) {
+  return new Map(rows.map((row) => [
+    row.key,
+    localSemanticScore(row.label, row.key, row.frequencies, profiles, language),
+  ]));
+}
+
+function serviceFailureMessage(error: unknown) {
+  const message = error instanceof Error ? error.message : "E5 service is unavailable";
+  return message.replace(/\s+/gu, " ").trim().slice(0, 500);
+}
+
+async function resolveNgramSemantics(input: {
+  rows: NgramSemanticInput[];
+  queries: string[];
+  profiles: ReturnType<typeof keywordProfiles>;
+  language: string;
+  requestId: string;
+  snapshotCache?: SnapshotPhraseSimilarity;
+  provider?: PhraseSimilarityProvider;
+  allowService: boolean;
+}): Promise<NgramSemanticResolution> {
+  const values = localNgramSemantics(input.rows, input.profiles, input.language);
+  const cache = input.snapshotCache;
+  if (!input.allowService) {
+    if (!cache || !sameQueries(cache.queries, input.queries)) {
+      return { values, source: "local", coverage: 0 };
+    }
+    const cachedRows = new Map(cache.rows.map((row) => [`${row[0]}\u0000${row[1]}`, row]));
+    let matched = 0;
+    for (const row of input.rows) {
+      const cached = cachedRows.get(`${row.key}\u0000${row.label}`);
+      if (!cached) continue;
+      matched += 1;
+      const exact = exactKeyword(row.key, input.profiles);
+      values.set(row.key, exact
+        ? { keySimilarity: 1, bestKeyword: exact }
+        : { keySimilarity: cached[2], bestKeyword: input.queries[cached[3]] ?? input.queries[0] ?? "" });
+    }
+    return matched
+      ? { values, source: "e5-cache", model: cache.model, revision: cache.revision, coverage: matched / Math.max(1, input.rows.length) }
+      : { values, source: "local", coverage: 0 };
+  }
+  if (!input.provider) return { values, source: "local", coverage: 0 };
+  if (input.rows.length > SNAPSHOT_PHRASE_SIMILARITIES_MAXIMUM) {
+    return {
+      values,
+      source: "local",
+      coverage: 0,
+      error: `E5 candidate guard exceeded (${input.rows.length})`,
+    };
+  }
+  let result: PhraseSimilarityResult;
+  try {
+    result = await input.provider({
+      queries: input.queries,
+      candidates: input.rows.map((row) => row.label),
+      language: input.language,
+      requestId: input.requestId,
+    });
+  } catch (error) {
+    return { values, source: "local", coverage: 0, error: serviceFailureMessage(error) };
+  }
+  if (result.best.length !== input.rows.length) {
+    return { values, source: "local", coverage: 0, error: "E5 service returned an incomplete result" };
+  }
+  const cacheRows: SnapshotPhraseSimilarity["rows"] = [];
+  for (const [index, row] of input.rows.entries()) {
+    const item = result.best[index];
+    if (!item || !Number.isInteger(item.queryIndex) || item.queryIndex < 0 || item.queryIndex >= input.queries.length
+      || !Number.isFinite(item.score)) {
+      return { values: localNgramSemantics(input.rows, input.profiles, input.language), source: "local", coverage: 0, error: "E5 service returned invalid scores" };
+    }
+    const score = round(Math.min(1, Math.max(0, item.score)), 6);
+    cacheRows.push([row.key, row.label, score, item.queryIndex]);
+    const exact = exactKeyword(row.key, input.profiles);
+    values.set(row.key, exact
+      ? { keySimilarity: 1, bestKeyword: exact }
+      : { keySimilarity: score, bestKeyword: input.queries[item.queryIndex] ?? input.queries[0] ?? "" });
+  }
+  return {
+    values,
+    source: "e5-service",
+    model: result.model,
+    revision: result.revision,
+    coverage: 1,
+    cache: {
+      version: 1,
+      engine: "e5",
+      model: result.model,
+      revision: result.revision,
+      queries: [...input.queries],
+      rows: cacheRows,
+    },
+  };
+}
+
 function statusFor(ownFrequency: number, q25: number, medianFrequency: number, q75: number, minimum: number) {
   const lowTarget = q25 > 0 ? q25 : medianFrequency * .55;
   const highTarget = q75 > 0 ? q75 : medianFrequency * 1.45;
   if (ownFrequency < Math.max(minimum, lowTarget)) return "Добавить" as const;
   if (highTarget > 0 && ownFrequency > Math.max(highTarget * 1.3, medianFrequency * 1.8)) return "Снизить" as const;
   return "Норма" as const;
+}
+
+function densityTargetContext(ownWords: number, competitorWords: number[]) {
+  const benchmarkWords = median(competitorWords.filter((value) => value > 0));
+  const factor = benchmarkWords > 0 ? Math.max(0, ownWords) / benchmarkWords : 1;
+  return {
+    ownWords: Math.max(0, Math.trunc(ownWords)),
+    benchmarkWords: Math.max(0, Math.ceil(benchmarkWords)),
+    factor,
+  };
+}
+
+function normalizedDensityTarget(value: number, factor: number) {
+  // A visible recommendation is actionable only as an integer occurrence and
+  // the product contract explicitly forbids a target below one.
+  return Math.max(1, Math.ceil(Math.max(0, value) * Math.max(0, factor)));
+}
+
+function statusWithinDisplayedRange(
+  status: BaseRow["status"],
+  ownCount: number,
+  q25Count: number,
+  q75Count: number,
+) {
+  return ownCount >= q25Count && ownCount <= q75Count ? "Норма" as const : status;
+}
+
+type NestingSource = Pick<ZoneAnalysis, "ngramCounts" | "ngramNesting">;
+type NestingClassification = "independent" | "partially_nested" | "fully_nested" | "insufficient_evidence";
+
+function nestingScope(key: string, sources: NestingSource[]) {
+  const supportsParents = key.split(/\s+/u).length === 2;
+  let occurrences = 0;
+  let evidencedOccurrences = 0;
+  let positionalStandaloneOccurrences = 0;
+  let evidenceComplete = supportsParents;
+  for (const source of sources) {
+    const count = Math.max(0, source.ngramCounts.get(key) ?? 0);
+    const evidence = source.ngramNesting.get(key);
+    occurrences += count;
+    evidencedOccurrences += evidence?.total ?? 0;
+    positionalStandaloneOccurrences += evidence?.standalone ?? 0;
+    if (!supportsParents || (evidence?.total ?? 0) !== count) evidenceComplete = false;
+  }
+  const standaloneOccurrences = Math.min(evidencedOccurrences, positionalStandaloneOccurrences);
+  const nestedOccurrences = Math.max(0, evidencedOccurrences - standaloneOccurrences);
+  let classification: NestingClassification = "independent";
+  if (supportsParents && !evidenceComplete) classification = "insufficient_evidence";
+  else if (nestedOccurrences > 0 && standaloneOccurrences === 0) classification = "fully_nested";
+  else if (nestedOccurrences > 0) classification = "partially_nested";
+  return {
+    classification,
+    evidenceComplete,
+    occurrences: Math.ceil(occurrences),
+    standaloneOccurrences: Math.ceil(standaloneOccurrences),
+    nestedOccurrences: Math.ceil(nestedOccurrences),
+    nestedShare: evidencedOccurrences > 0 ? round(nestedOccurrences / evidencedOccurrences * 100, 1) : 0,
+  };
+}
+
+function ngramNestingReport(
+  key: string,
+  competitors: NestingSource[],
+  own: NestingSource,
+  labels: Map<string, string>,
+) {
+  const competitorScope = nestingScope(key, competitors);
+  const ownScope = nestingScope(key, [own]);
+  const parentCounts = new Map<string, number>();
+  const parentSites = new Map<string, number>();
+  for (const source of competitors) {
+    const evidence = source.ngramNesting.get(key);
+    if (!evidence) continue;
+    for (const [parent, count] of evidence.parents) {
+      increment(parentCounts, parent, count);
+      if (count > 0) increment(parentSites, parent);
+    }
+  }
+  const parents = [...parentCounts]
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+    .slice(0, 5)
+    .map(([parentKey, occurrences]) => ({
+      key: parentKey,
+      phrase: labels.get(parentKey) ?? parentKey,
+      occurrences: Math.ceil(occurrences),
+      sites: parentSites.get(parentKey) ?? 0,
+      share: competitorScope.occurrences > 0 ? round(occurrences / competitorScope.occurrences * 100, 1) : 0,
+    }));
+  const fullCoverageParents = competitorScope.evidenceComplete
+    ? parents.filter((parent) => parent.occurrences === competitorScope.occurrences)
+    : [];
+  // A short phrase can be collapsed only into one unambiguous parent. The
+  // middle bigram of a stable four-word expression has two 100% parents and
+  // therefore must remain a separate row.
+  const mergeParent = fullCoverageParents.length === 1 ? fullCoverageParents[0] : undefined;
+  const ownMergeParentOccurrences = mergeParent
+    ? own.ngramNesting.get(key)?.parents.get(mergeParent.key) ?? 0
+    : 0;
+  const ownMergeParentComplete = ownScope.evidenceComplete
+    && Boolean(mergeParent)
+    && ownMergeParentOccurrences === ownScope.occurrences;
+  return {
+    ...competitorScope,
+    mergeable: Boolean(mergeParent),
+    mergeParentKey: mergeParent?.key ?? "",
+    mergeParentPhrase: mergeParent?.phrase ?? "",
+    ownClassification: ownScope.classification,
+    ownEvidenceComplete: ownScope.evidenceComplete,
+    ownOccurrences: ownScope.occurrences,
+    ownStandaloneOccurrences: ownScope.standaloneOccurrences,
+    ownNestedOccurrences: ownScope.nestedOccurrences,
+    ownNestedShare: ownScope.nestedShare,
+    ownMergeParentOccurrences: Math.ceil(ownMergeParentOccurrences),
+    ownMergeParentShare: ownScope.occurrences > 0 ? round(ownMergeParentOccurrences / ownScope.occurrences * 100, 1) : 0,
+    ownMergeParentComplete,
+    parents,
+  };
 }
 
 function editGap(status: BaseRow["status"], ownFrequency: number, medianFrequency: number, q75: number) {
@@ -1072,6 +1364,23 @@ function serializeForms(forms: FormCounts, allowedKeys: Set<string>) {
     .map(([form, count]) => [form, Math.max(0, Math.trunc(count))] as [string, number])] as [string, Array<[string, number]>]);
 }
 
+function serializeNgramNesting(nesting: NgramNestingCounts, allowedKeys: Set<string>): SerializedNgramNestingCounts {
+  return [...nesting]
+    .filter(([key, evidence]) => allowedKeys.has(key) && evidence.total > 0)
+    .sort((left, right) => right[1].total - left[1].total || left[0].localeCompare(right[0]))
+    .slice(0, SNAPSHOT_NGRAMS)
+    .map(([key, evidence]) => [
+      key,
+      Math.max(0, Math.trunc(evidence.total)),
+      Math.max(0, Math.min(Math.trunc(evidence.total), Math.trunc(evidence.standalone))),
+      [...evidence.parents]
+        .filter(([parent, count]) => allowedKeys.has(parent) && count > 0)
+        .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+        .slice(0, SNAPSHOT_NGRAM_PARENTS_PER_KEY)
+        .map(([parent, count]) => [parent, Math.max(0, Math.trunc(count))] as [string, number]),
+    ]);
+}
+
 function serializeZoneAnalysis(zone: ZoneAnalysis): SerializedZoneAnalysis {
   const termCounts = [...zone.termCounts].sort((a, b) => b[1] - a[1]).slice(0, SNAPSHOT_TERMS)
     .map(([key, count]) => [key, Math.max(0, Math.trunc(count))] as [string, number]);
@@ -1084,6 +1393,7 @@ function serializeZoneAnalysis(zone: ZoneAnalysis): SerializedZoneAnalysis {
     termCounts,
     termForms: serializeForms(zone.termForms, new Set(termCounts.map(([key]) => key))),
     ngramCounts,
+    ngramNesting: serializeNgramNesting(zone.ngramNesting, new Set(ngramCounts.map(([key]) => key))),
   };
 }
 
@@ -1097,42 +1407,11 @@ function serializeDocument(document: DocumentAnalysis): SerializedDocument {
     wordCount: document.wordCount, contentWordCount: document.contentWordCount, uniqueTerms: document.uniqueTerms,
     headings: document.headings, sentences: document.sentences, truncated: document.truncated,
     source: document.source, qualityScore: document.qualityScore,
-    sentenceCorpusTruncated: Boolean(document.sentenceCorpusTruncated),
-    sentenceCorpus: document.sentenceCorpus.map((sentence) => ({
-      id: sentence.id,
-      text: sentence.text.slice(0, SNAPSHOT_SENTENCE_MAX_CHARACTERS),
-      tokenKeys: sentence.tokenKeys.slice(0, SNAPSHOT_SENTENCE_MAX_CHARACTERS),
-      tokenCount: Math.max(0, Math.trunc(sentence.tokenCount)),
-    })),
     termCounts, termForms: serializeForms(document.termForms, new Set(termCounts.map(([key]) => key))),
     ngramCounts, ngramForms: serializeForms(document.ngramForms, new Set(ngramCounts.map(([key]) => key))),
+    ngramNesting: serializeNgramNesting(document.ngramNesting, new Set(ngramCounts.map(([key]) => key))),
     zones: Object.fromEntries(ANALYSIS_ZONES.map((zone) => [zone, serializeZoneAnalysis(document.zones[zone])])) as Record<AnalysisZone, SerializedZoneAnalysis>,
   };
-}
-
-function deserializeSentenceCorpus(value: unknown, language: string): SnapshotSentence[] {
-  const entries = snapshotArray(value, SNAPSHOT_SENTENCES_PER_DOCUMENT, "sentenceCorpus");
-  const result: SnapshotSentence[] = [];
-  let storedTokens = 0;
-  for (const raw of entries) {
-    if (!raw || typeof raw !== "object") continue;
-    const candidate = raw as Partial<SnapshotSentence>;
-    const text = typeof candidate.text === "string" ? candidate.text.slice(0, SNAPSHOT_SENTENCE_MAX_CHARACTERS).trim() : "";
-    // Snapshot travels through the browser, so token keys are derived again
-    // from the bounded evidence text instead of trusting client-supplied keys.
-    const tokens = text ? tokenize(text, language) : [];
-    const tokenKeys = tokens.map((token) => token.key);
-    if (!text || !tokenKeys.length) continue;
-    if (storedTokens + tokenKeys.length > SNAPSHOT_SENTENCE_TOKENS_PER_DOCUMENT) break;
-    storedTokens += tokenKeys.length;
-    result.push({
-      id: typeof candidate.id === "string" && candidate.id.length <= 64 ? candidate.id : `s${result.length + 1}`,
-      text,
-      tokenKeys,
-      tokenCount: tokenKeys.length,
-    });
-  }
-  return result;
 }
 
 function snapshotRecord(value: unknown, label: string): Record<string, unknown> {
@@ -1210,6 +1489,44 @@ function deserializeForms(value: unknown, limit: number, label: string): FormCou
   return result;
 }
 
+function deserializeNgramNesting(value: unknown, label: string): NgramNestingCounts {
+  const result: NgramNestingCounts = new Map();
+  // The field is additive inside snapshot v5. Snapshots made before positional
+  // nesting was introduced remain valid, but can never claim complete proof.
+  if (value === undefined || value === null) return result;
+  for (const [index, rawTuple] of snapshotArray(value, SNAPSHOT_NGRAMS, label).entries()) {
+    if (!Array.isArray(rawTuple) || rawTuple.length < 4) {
+      throw new Error(`Некорректный snapshot: ${label}[${index}] должен быть четвёркой`);
+    }
+    const key = snapshotString(rawTuple[0], SNAPSHOT_KEY_MAX_CHARACTERS, `${label}[${index}].key`);
+    if (result.has(key)) throw new Error(`Некорректный snapshot: повтор вложенности ${key}`);
+    const total = snapshotCount(rawTuple[1], `${label}[${index}].total`);
+    const standalone = snapshotCount(rawTuple[2], `${label}[${index}].standalone`);
+    if (standalone > total) throw new Error(`Некорректный snapshot: ${label}[${index}].standalone превышает total`);
+    const parents = new Map<string, number>();
+    for (const [parentIndex, rawParent] of snapshotArray(
+      rawTuple[3],
+      SNAPSHOT_NGRAM_PARENTS_PER_KEY,
+      `${label}[${index}].parents`,
+    ).entries()) {
+      if (!Array.isArray(rawParent) || rawParent.length < 2) {
+        throw new Error(`Некорректный snapshot: ${label}[${index}].parents[${parentIndex}] должен быть парой`);
+      }
+      const parent = snapshotString(
+        rawParent[0],
+        SNAPSHOT_KEY_MAX_CHARACTERS,
+        `${label}[${index}].parents[${parentIndex}].key`,
+      );
+      if (parents.has(parent)) throw new Error(`Некорректный snapshot: повтор родительской фразы ${parent}`);
+      const count = snapshotCount(rawParent[1], `${label}[${index}].parents[${parentIndex}].count`);
+      if (count > total) throw new Error(`Некорректный snapshot: связь ${parent} превышает total`);
+      parents.set(parent, count);
+    }
+    result.set(key, { total, standalone, parents });
+  }
+  return result;
+}
+
 function deserializeZoneAnalysis(value: unknown, label: string): ZoneAnalysis {
   const zone = snapshotRecord(value, label);
   return {
@@ -1219,13 +1536,13 @@ function deserializeZoneAnalysis(value: unknown, label: string): ZoneAnalysis {
     termCounts: deserializeCounts(zone.termCounts, SNAPSHOT_TERMS, `${label}.termCounts`),
     termForms: deserializeForms(zone.termForms, SNAPSHOT_TERMS, `${label}.termForms`),
     ngramCounts: deserializeCounts(zone.ngramCounts, SNAPSHOT_NGRAMS, `${label}.ngramCounts`),
+    ngramNesting: deserializeNgramNesting(zone.ngramNesting, `${label}.ngramNesting`),
   };
 }
 
 function deserializeDocument(value: unknown, language: string, label: string): DocumentAnalysis {
   const document = snapshotRecord(value, label);
   const zones = snapshotRecord(document.zones, `${label}.zones`);
-  const sentenceCorpus = deserializeSentenceCorpus(document.sentenceCorpus, language);
   return {
     name: optionalSnapshotString(document.name, 512, "Документ"),
     url: optionalSnapshotString(document.url, 2_048),
@@ -1241,14 +1558,56 @@ function deserializeDocument(value: unknown, language: string, label: string): D
     qualityScore: typeof document.qualityScore === "number" && Number.isFinite(document.qualityScore)
       ? Math.min(100, Math.max(0, document.qualityScore))
       : 100,
-    sentenceCorpusTruncated: Boolean(document.sentenceCorpusTruncated),
-    sentenceCorpus,
     termCounts: deserializeCounts(document.termCounts, SNAPSHOT_TERMS, `${label}.termCounts`),
     termForms: deserializeForms(document.termForms, SNAPSHOT_TERMS, `${label}.termForms`),
     ngramCounts: deserializeCounts(document.ngramCounts, SNAPSHOT_NGRAMS, `${label}.ngramCounts`),
     ngramForms: deserializeForms(document.ngramForms, SNAPSHOT_NGRAMS, `${label}.ngramForms`),
+    ngramNesting: deserializeNgramNesting(document.ngramNesting, `${label}.ngramNesting`),
     zones: Object.fromEntries(ANALYSIS_ZONES.map((zone) =>
       [zone, deserializeZoneAnalysis(zones[zone], `${label}.zones.${zone}`)])) as Record<AnalysisZone, ZoneAnalysis>,
+  };
+}
+
+function deserializePhraseSimilarity(value: unknown): SnapshotPhraseSimilarity | undefined {
+  if (value === undefined || value === null) return undefined;
+  const cache = snapshotRecord(value, "snapshot.phraseSimilarity");
+  if (cache.version !== 1 || cache.engine !== "e5") {
+    throw new Error("Некорректный snapshot: неизвестная версия сходства фраз");
+  }
+  const queries = snapshotArray(cache.queries, MAX_QUERIES, "snapshot.phraseSimilarity.queries")
+    .map((query, index) => snapshotString(query, MAX_QUERY_LENGTH, `snapshot.phraseSimilarity.queries[${index}]`));
+  if (!queries.length) throw new Error("Некорректный snapshot: кэш E5 не содержит ключей");
+  const seen = new Set<string>();
+  const rows = snapshotArray(
+    cache.rows,
+    SNAPSHOT_PHRASE_SIMILARITIES_MAXIMUM,
+    "snapshot.phraseSimilarity.rows",
+  ).map((rawRow, index) => {
+    if (!Array.isArray(rawRow) || rawRow.length < 4) {
+      throw new Error(`Некорректный snapshot: snapshot.phraseSimilarity.rows[${index}] должен быть четвёркой`);
+    }
+    const key = snapshotString(rawRow[0], SNAPSHOT_KEY_MAX_CHARACTERS, `snapshot.phraseSimilarity.rows[${index}].key`);
+    const label = snapshotString(rawRow[1], SNAPSHOT_FORM_MAX_CHARACTERS, `snapshot.phraseSimilarity.rows[${index}].label`);
+    const score = Number(rawRow[2]);
+    const bestQueryIndex = Number(rawRow[3]);
+    if (!Number.isFinite(score) || score < 0 || score > 1) {
+      throw new Error(`Некорректный snapshot: snapshot.phraseSimilarity.rows[${index}].score вне диапазона`);
+    }
+    if (!Number.isInteger(bestQueryIndex) || bestQueryIndex < 0 || bestQueryIndex >= queries.length) {
+      throw new Error(`Некорректный snapshot: snapshot.phraseSimilarity.rows[${index}].bestQueryIndex вне диапазона`);
+    }
+    const identity = `${key}\u0000${label}`;
+    if (seen.has(identity)) throw new Error(`Некорректный snapshot: повтор строки E5 ${key}`);
+    seen.add(identity);
+    return [key, label, round(score, 6), bestQueryIndex] as [string, string, number, number];
+  });
+  return {
+    version: 1,
+    engine: "e5",
+    model: snapshotString(cache.model, 240, "snapshot.phraseSimilarity.model"),
+    revision: optionalSnapshotString(cache.revision, 128) || undefined,
+    queries,
+    rows,
   };
 }
 
@@ -1301,6 +1660,7 @@ function normalizeClientSnapshot(value: unknown): CorpusSnapshot {
     competitors: competitors as SerializedDocument[],
     own: raw.own as SerializedDocument,
     warnings,
+    phraseSimilarity: deserializePhraseSimilarity(raw.phraseSimilarity),
   };
 }
 
@@ -1369,14 +1729,17 @@ function filterCorpusAnomalies(documents: DocumentAnalysis[]) {
     : { documents, warnings: [] as AnalysisWarning[], anomalies: [] as Array<{ index: number; document: DocumentAnalysis; detail: string }> };
 }
 
-async function buildSnapshot(payload: AnalyzeRequest, serpQuery: string): Promise<CorpusSnapshot> {
+async function buildSnapshot(payload: AnalyzeRequest, serpQuery: string, dependencies: AnalyzeDependencies): Promise<CorpusSnapshot> {
   const ownInput = payload.ownPage;
   const competitorInputs = Array.isArray(payload.competitors) ? payload.competitors : [];
   if (!ownInput) throw new Error("Добавьте свою страницу");
   if (!competitorInputs.length) throw new Error("Не найдено ни одного конкурента для анализа");
   if (competitorInputs.length > SNAPSHOT_COMPETITORS_MAXIMUM) throw new Error("За один запуск можно безопасно обработать не более 500 конкурентов");
 
-  const useFirecrawl = payload.useFirecrawl !== false;
+  // Firecrawl is a server-side fallback: configuring a key enables it
+  // automatically, while an absent key keeps the direct HTTP path unchanged.
+  // The client cannot accidentally disable a configured recovery path.
+  const useFirecrawl = Boolean(firecrawlKey());
   const inputs = [ownInput, ...competitorInputs];
   const settled = await settleWithConcurrency(inputs, PAGE_PREPARE_CONCURRENCY, (input, index) =>
     prepareInput(input, index === 0 ? "Наша страница" : `Конкурент ${index}`, useFirecrawl));
@@ -1397,6 +1760,7 @@ async function buildSnapshot(payload: AnalyzeRequest, serpQuery: string): Promis
   const language = requestedLanguage !== "auto" && LANGUAGE_CONFIGS[requestedLanguage]
     ? requestedLanguage
     : detectLanguage(detectionText, [ownPrepared.htmlLanguage, ...preparedCompetitors.map(({ page }) => page.htmlLanguage)]);
+  if (language === "ru") await initializeRussianMorphology(dependencies.assetOrigin);
 
   const analyzedRecords: Array<{ page: PreparedPage; inputIndex: number; document: DocumentAnalysis }> = [];
   preparedCompetitors.forEach(({ page, inputIndex }) => {
@@ -1429,16 +1793,15 @@ async function buildSnapshot(payload: AnalyzeRequest, serpQuery: string): Promis
   warnings.push(...anomalyResult.warnings);
   if (!analyzedCompetitors.length) throw new Error("Не удалось получить содержательный корпус конкурентов");
   const own = analyzePrepared(ownPrepared, language);
-  const boundedDocuments = globallyBoundSentenceCorpora([own, ...analyzedCompetitors]);
   return {
     version: SNAPSHOT_VERSION, id: snapshotId(), createdAt: new Date().toISOString(), language, serpQuery,
-    search: payload.search ?? {}, competitors: boundedDocuments.slice(1).map(serializeDocument), own: serializeDocument(boundedDocuments[0]), warnings,
+    search: payload.search ?? {}, competitors: analyzedCompetitors.map(serializeDocument), own: serializeDocument(own), warnings,
   };
 }
 
 function roundTo50(value: number) { return Math.max(50, Math.round(value / 50) * 50); }
 
-export async function analyzePayload(payload: AnalyzeRequest) {
+export async function analyzePayload(payload: AnalyzeRequest, dependencies: AnalyzeDependencies = {}) {
   const queries = parseQueries(payload);
   const payloadSerpQuery = typeof payload.serpQuery === "string" ? payload.serpQuery.trim() : "";
   const snapshotSerpQuery = typeof payload.snapshot?.serpQuery === "string" ? payload.snapshot.serpQuery.trim() : "";
@@ -1451,15 +1814,16 @@ export async function analyzePayload(payload: AnalyzeRequest) {
       throw new Error("Для смены языка нужно обновить корпус конкурентов");
     }
   } else {
-    snapshot = await buildSnapshot(payload, serpQuery);
+    snapshot = await buildSnapshot(payload, serpQuery, dependencies);
   }
 
   const language = snapshot.language;
-  const boundedDocuments = globallyBoundSentenceCorpora([
+  if (language === "ru") await initializeRussianMorphology(dependencies.assetOrigin);
+  const boundedDocuments = [
     deserializeDocument(snapshot.own, language, "snapshot.own"),
     ...snapshot.competitors.slice(0, SNAPSHOT_COMPETITORS_MAXIMUM)
       .map((document, index) => deserializeDocument(document, language, `snapshot.competitors[${index}]`)),
-  ]);
+  ];
   const ownPage = boundedDocuments[0];
   const competitors = boundedDocuments.slice(1);
   snapshot = {
@@ -1543,6 +1907,10 @@ export async function analyzePayload(payload: AnalyzeRequest) {
   };
 
   const minSites = competitorCount >= 6 ? 3 : competitorCount >= 3 ? 2 : 1;
+  const globalDensityContext = densityTargetContext(
+    ownPage.wordCount,
+    competitors.map((document) => document.wordCount),
+  );
   const termUniverse = new Set([...competitors.flatMap((document) => [...document.termCounts.keys()]), ...queryKeySet]);
   const baseTerms: BaseRow[] = [...termUniverse].map((key) => {
     const counts = competitors.map((document) => document.termCounts.get(key) ?? 0);
@@ -1589,6 +1957,9 @@ export async function analyzePayload(payload: AnalyzeRequest) {
     q25Frequency: number;
     q75Frequency: number;
     competitorTfidf: number;
+    densityFactor: number;
+    benchmarkWords: number;
+    ownWords: number;
     status: BaseRow["status"];
   }>>();
   for (const row of baseTerms) {
@@ -1606,24 +1977,35 @@ export async function analyzePayload(payload: AnalyzeRequest) {
       const q25Frequency = quantile(frequencies, .25);
       const medianFrequency = median(frequencies);
       const q75Frequency = quantile(frequencies, .75);
+      const densityContext = densityTargetContext(
+        ownZone.wordCount,
+        competitorZones.filter((value) => value.available).map((value) => value.wordCount),
+      );
+      const q25Count = normalizedDensityTarget(quantile(counts, .25), densityContext.factor);
+      const medianCount = normalizedDensityTarget(median(counts), densityContext.factor);
+      const q75Count = Math.max(q25Count, normalizedDensityTarget(quantile(counts, .75), densityContext.factor));
+      const frequencyStatus = statusFor(ownFrequency, q25Frequency, medianFrequency, q75Frequency, .08);
       return [zone, {
         available: ownZone.available || competitorZones.some((value) => value.available),
         sites,
         ownCount,
         ownFrequency,
-        medianCount: median(counts),
+        medianCount,
         medianFrequency,
-        q25Count: quantile(counts, .25),
-        q75Count: quantile(counts, .75),
+        q25Count,
+        q75Count,
         q25Frequency,
         q75Frequency,
         competitorTfidf: tfidfValues.reduce((sum, value) => sum + value, 0) / competitorCount,
-        status: statusFor(ownFrequency, q25Frequency, medianFrequency, q75Frequency, .08),
+        densityFactor: densityContext.factor,
+        benchmarkWords: densityContext.benchmarkWords,
+        ownWords: densityContext.ownWords,
+        status: statusWithinDisplayedRange(frequencyStatus, ownCount, q25Count, q75Count),
       }];
     })) as Record<AnalysisZone, {
       available: boolean; sites: number; ownCount: number; ownFrequency: number; medianCount: number;
       medianFrequency: number; q25Count: number; q75Count: number; q25Frequency: number; q75Frequency: number;
-      competitorTfidf: number; status: BaseRow["status"];
+      competitorTfidf: number; densityFactor: number; benchmarkWords: number; ownWords: number; status: BaseRow["status"];
     }>);
   }
   const maxZoneImportanceRaw = Object.fromEntries(ANALYSIS_ZONES.map((zone) => [zone, Math.max(
@@ -1642,6 +2024,18 @@ export async function analyzePayload(payload: AnalyzeRequest) {
     const keywordHit = queryKeySet.has(row.key);
     const normalized = normalizedImportance(termImportanceRaw.get(row.key) ?? 0, maxTermImportanceRaw);
     const importance = keywordHit ? Math.max(1, normalized) : normalized;
+    const normalizedQ25Count = normalizedDensityTarget(quantile(row.counts, .25), globalDensityContext.factor);
+    const normalizedMedianCount = normalizedDensityTarget(row.medianCount, globalDensityContext.factor);
+    const normalizedQ75Count = Math.max(
+      normalizedQ25Count,
+      normalizedDensityTarget(quantile(row.counts, .75), globalDensityContext.factor),
+    );
+    const normalizedStatus = statusWithinDisplayedRange(
+      row.status,
+      row.ownCount,
+      normalizedQ25Count,
+      normalizedQ75Count,
+    );
     const zones = Object.fromEntries(ANALYSIS_ZONES.map((zone) => {
       const value = zoneBases.get(row.key)![zone];
       const zoneDf = value.sites / competitorCount;
@@ -1653,24 +2047,30 @@ export async function analyzePayload(payload: AnalyzeRequest) {
         available: value.available,
         sites: value.sites,
         ownCount: Math.ceil(value.ownCount),
-        medianCount: Math.max(1, Math.ceil(value.medianCount)),
-        q25Count: Math.ceil(value.q25Count),
-        q75Count: Math.ceil(value.q75Count),
+        medianCount: value.medianCount,
+        q25Count: value.q25Count,
+        q75Count: value.q75Count,
+        densityFactor: round(value.densityFactor, 3),
+        benchmarkWords: value.benchmarkWords,
+        ownWords: value.ownWords,
         importance: round(zoneImportance, 1),
         status: value.status,
       }];
     })) as Record<AnalysisZone, {
       available: boolean; sites: number; ownCount: number; medianCount: number; q25Count: number;
-      q75Count: number; importance: number; status: BaseRow["status"];
+      q75Count: number; densityFactor: number; benchmarkWords: number; ownWords: number;
+      importance: number; status: BaseRow["status"];
     }>;
     return {
       key: row.key, term: row.label, forms: row.forms, sites: row.sites, df: round(df, 3), coverage: round(df * 100, 0),
-      ownCount: Math.ceil(row.ownCount), ownFrequency: round(row.ownFrequency, 2), medianCount: Math.max(1, Math.ceil(row.medianCount)),
-      q25Count: Math.ceil(quantile(row.counts, .25)), q75Count: Math.ceil(quantile(row.counts, .75)),
+      ownCount: Math.ceil(row.ownCount), ownFrequency: round(row.ownFrequency, 2), medianCount: normalizedMedianCount,
+      q25Count: normalizedQ25Count, q75Count: normalizedQ75Count,
+      densityFactor: round(globalDensityContext.factor, 3), benchmarkWords: globalDensityContext.benchmarkWords,
+      ownWords: globalDensityContext.ownWords,
       medianFrequency: round(row.medianFrequency, 2), q25: round(row.q25, 2), q75: round(row.q75, 2),
       averageFrequency: round(row.averageFrequency, 2), idf: round(row.idf, 3), competitorTfidf: round(row.competitorTfidf, 3),
       ownTfidf: round(row.ownTfidf, 3), tfidfNormalized: round(tfidfNormalized, 3),
-      importance: round(importance, 1), keywordHit, bestKeyword: matchingProfile?.keyword ?? "", status: row.status, zones,
+      importance: round(importance, 1), keywordHit, bestKeyword: matchingProfile?.keyword ?? "", status: normalizedStatus, zones,
     };
   });
   const selectedTermKeys = new Set(
@@ -1725,6 +2125,7 @@ export async function analyzePayload(payload: AnalyzeRequest) {
   }).filter((row) => row.sites >= minSites
     || queryNgramKeySet.has(row.key)
     || (structuralNgramDocumentFrequency.get(row.key) ?? 0) >= 2);
+  const ngramLabels = new Map(baseNgrams.map((row) => [row.key, row.label]));
 
   const maxNgramTfidf = Math.max(.0001, ...baseNgrams.map((row) => row.competitorTfidf));
   const ngramDocumentWeightRaw = new Map(baseNgrams.map((row) => [
@@ -1736,10 +2137,20 @@ export async function analyzePayload(payload: AnalyzeRequest) {
     key,
     normalizedImportance(raw, maxNgramDocumentWeightRaw),
   ]));
-  const ngramSemantics = new Map(baseNgrams.map((row) => [
-    row.key,
-    localSemanticScore(row.label, row.key, row.frequencies, profiles, language),
-  ]));
+  const ngramSemanticResolution = await resolveNgramSemantics({
+    rows: baseNgrams,
+    queries,
+    profiles,
+    language,
+    requestId: snapshot.id,
+    snapshotCache: snapshot.phraseSimilarity,
+    provider: dependencies.phraseSimilarity,
+    allowService: !payload.snapshot,
+  });
+  const ngramSemantics = ngramSemanticResolution.values;
+  if (!payload.snapshot && ngramSemanticResolution.cache) {
+    snapshot = { ...snapshot, phraseSimilarity: ngramSemanticResolution.cache };
+  }
   const ngramImportanceRaw = new Map(baseNgrams.map((row) => {
     const df = row.sites / competitorCount;
     return [row.key, df * (ngramSemantics.get(row.key)?.keySimilarity ?? 0)];
@@ -1748,7 +2159,7 @@ export async function analyzePayload(payload: AnalyzeRequest) {
   const ngramZoneBases = new Map<string, Record<AnalysisZone, {
     available: boolean; sites: number; ownCount: number; medianCount: number; q25Count: number; q75Count: number;
     frequencies: number[]; ownFrequency: number; medianFrequency: number; q25Frequency: number; q75Frequency: number;
-    competitorTfidf: number; status: BaseRow["status"];
+    competitorTfidf: number; densityFactor: number; benchmarkWords: number; ownWords: number; status: BaseRow["status"];
   }>>();
   for (const row of baseNgrams) {
     ngramZoneBases.set(row.key, Object.fromEntries(ANALYSIS_ZONES.map((zone) => {
@@ -1765,17 +2176,28 @@ export async function analyzePayload(payload: AnalyzeRequest) {
       const q25Frequency = quantile(frequencies, .25);
       const medianFrequency = median(frequencies);
       const q75Frequency = quantile(frequencies, .75);
+      const densityContext = densityTargetContext(
+        ownZone.wordCount,
+        competitorZones.filter((value) => value.available).map((value) => value.wordCount),
+      );
+      const q25Count = normalizedDensityTarget(quantile(counts, .25), densityContext.factor);
+      const medianCount = normalizedDensityTarget(median(counts), densityContext.factor);
+      const q75Count = Math.max(q25Count, normalizedDensityTarget(quantile(counts, .75), densityContext.factor));
+      const frequencyStatus = statusFor(ownFrequency, q25Frequency, medianFrequency, q75Frequency, .05);
       return [zone, {
         available: ownZone.available || competitorZones.some((value) => value.available), sites, ownCount,
-        medianCount: median(counts), q25Count: quantile(counts, .25), q75Count: quantile(counts, .75),
+        medianCount, q25Count, q75Count,
         frequencies, ownFrequency, medianFrequency, q25Frequency, q75Frequency,
         competitorTfidf: tfidfValues.reduce((sum, value) => sum + value, 0) / competitorCount,
-        status: statusFor(ownFrequency, q25Frequency, medianFrequency, q75Frequency, .05),
+        densityFactor: densityContext.factor,
+        benchmarkWords: densityContext.benchmarkWords,
+        ownWords: densityContext.ownWords,
+        status: statusWithinDisplayedRange(frequencyStatus, ownCount, q25Count, q75Count),
       }];
     })) as Record<AnalysisZone, {
       available: boolean; sites: number; ownCount: number; medianCount: number; q25Count: number; q75Count: number;
       frequencies: number[]; ownFrequency: number; medianFrequency: number; q25Frequency: number; q75Frequency: number;
-      competitorTfidf: number; status: BaseRow["status"];
+      competitorTfidf: number; densityFactor: number; benchmarkWords: number; ownWords: number; status: BaseRow["status"];
     }>);
   }
   const maxNgramZoneImportanceRaw = Object.fromEntries(ANALYSIS_ZONES.map((zone) => [zone, Math.max(
@@ -1797,8 +2219,22 @@ export async function analyzePayload(payload: AnalyzeRequest) {
     const normalized = smoothNgramImportance(ngramImportanceRaw.get(row.key) ?? 0, maxNgramImportanceRaw);
     const importance = boostNgramImportance(normalized, queryLemmaCoverage, headingCoverage);
     const priority = importance * editGap(row.status, row.ownFrequency, row.medianFrequency, row.q75);
+    const normalizedQ25Count = normalizedDensityTarget(quantile(row.counts, .25), globalDensityContext.factor);
+    const normalizedMedianCount = normalizedDensityTarget(row.medianCount, globalDensityContext.factor);
+    const normalizedQ75Count = Math.max(
+      normalizedQ25Count,
+      normalizedDensityTarget(quantile(row.counts, .75), globalDensityContext.factor),
+    );
+    const normalizedStatus = statusWithinDisplayedRange(
+      row.status,
+      row.ownCount,
+      normalizedQ25Count,
+      normalizedQ75Count,
+    );
     const zones = Object.fromEntries(ANALYSIS_ZONES.map((zone) => {
       const value = ngramZoneBases.get(row.key)![zone];
+      const competitorZones = competitors.map((document) => document.zones[zone]);
+      const ownZone = ownPage.zones[zone];
       const zoneDf = value.sites / competitorCount;
       const zoneRaw = zoneDf * semantic.keySimilarity;
       const normalizedZoneImportance = smoothNgramImportance(zoneRaw, maxNgramZoneImportanceRaw[zone]);
@@ -1809,23 +2245,35 @@ export async function analyzePayload(payload: AnalyzeRequest) {
         available: value.available,
         sites: value.sites,
         ownCount: Math.ceil(value.ownCount),
-        medianCount: Math.max(1, Math.ceil(value.medianCount)),
-        q25Count: Math.ceil(value.q25Count),
-        q75Count: Math.ceil(value.q75Count),
+        medianCount: value.medianCount,
+        q25Count: value.q25Count,
+        q75Count: value.q75Count,
+        densityFactor: round(value.densityFactor, 3),
+        benchmarkWords: value.benchmarkWords,
+        ownWords: value.ownWords,
         importance: round(zoneImportance, 1),
         status: value.status,
+        nesting: ngramNestingReport(row.key, competitorZones, ownZone, ngramLabels),
       }];
     })) as Record<AnalysisZone, {
       available: boolean; sites: number; ownCount: number; medianCount: number; q25Count: number;
-      q75Count: number; importance: number; status: BaseRow["status"];
+      q75Count: number; densityFactor: number; benchmarkWords: number; ownWords: number;
+      importance: number; status: BaseRow["status"]; nesting: ReturnType<typeof ngramNestingReport>;
     }>;
     return {
       key: row.key, phrase: row.label, forms: row.forms, sites: row.sites, df: round(df, 3), coverage: round(df * 100, 0),
-      ownCount: Math.ceil(row.ownCount), ownFrequency: round(row.ownFrequency, 2), medianCount: Math.max(1, Math.ceil(row.medianCount)),
+      ownCount: Math.ceil(row.ownCount), ownFrequency: round(row.ownFrequency, 2), medianCount: normalizedMedianCount,
+      q25Count: normalizedQ25Count, q75Count: normalizedQ75Count,
+      densityFactor: round(globalDensityContext.factor, 3), benchmarkWords: globalDensityContext.benchmarkWords,
+      ownWords: globalDensityContext.ownWords,
       medianFrequency: round(row.medianFrequency, 2), q25: round(row.q25, 2), q75: round(row.q75, 2), idf: round(row.idf, 3),
       competitorTfidf: round(row.competitorTfidf, 3), tfidfNormalized: round(tfidfNormalized, 3), keySimilarity: round(semantic.keySimilarity, 3),
       importance: round(Math.max(1, importance), 1), priority: round(priority, 1), bestKeyword: semantic.bestKeyword,
-      keywordHit: exactQueryMatch, status: row.status, zones,
+      keywordHit: exactQueryMatch,
+      keyMatch: exactQueryMatch ? "exact" : semantic.keySimilarity > 0.8 ? "possible" : "none",
+      status: normalizedStatus,
+      nesting: ngramNestingReport(row.key, competitors, ownPage, ngramLabels),
+      zones,
     };
   });
   const selectedNgramKeys = new Set(
@@ -1855,6 +2303,7 @@ export async function analyzePayload(payload: AnalyzeRequest) {
     .sort((a, b) => b.importance - a.importance || b.keySimilarity - a.keySimilarity || b.sites - a.sites);
 
   const importantTerms = [...termRows].sort((a, b) => b.importance - a.importance).slice(0, 30);
+  const rawTermTargets = new Map(baseTerms.map((row) => [row.key, Math.max(1, Math.ceil(row.medianCount))]));
   const importantNgrams = baseNgrams
     .map((row) => ({
       key: row.key,
@@ -1866,9 +2315,15 @@ export async function analyzePayload(payload: AnalyzeRequest) {
     .sort((a, b) => b.importance - a.importance || b.sites - a.sites || a.key.localeCompare(b.key, language))
     .slice(0, 20);
   const importantSignals = [
-    ...importantTerms.map((row) => ({ key: row.key, importance: row.importance, targetCount: row.medianCount, kind: "term" as const })),
+    ...importantTerms.map((row) => ({
+      key: row.key,
+      importance: row.importance,
+      targetCount: rawTermTargets.get(row.key) ?? 1,
+      kind: "term" as const,
+    })),
     ...importantNgrams.map((row) => ({ key: row.key, importance: row.importance, targetCount: row.targetCount, kind: "ngram" as const })),
   ];
+  const competitorDocumentWords = competitors.map((document) => document.wordCount);
   const weightedCoverageFor = (document: DocumentAnalysis) => {
     let earned = 0, possible = 0;
     for (const signal of importantSignals) {
@@ -1883,12 +2338,14 @@ export async function analyzePayload(payload: AnalyzeRequest) {
   };
   const weightedDensityFor = (document: DocumentAnalysis) => {
     let earned = 0, possible = 0;
+    const documentDensityContext = densityTargetContext(document.wordCount, competitorDocumentWords);
     for (const signal of importantSignals) {
       const weight = Math.max(0, signal.importance);
       const count = signal.kind === "term"
         ? document.termCounts.get(signal.key) ?? 0
         : document.ngramCounts.get(signal.key) ?? 0;
-      const density = signal.targetCount > 0 ? Math.min(1, count / signal.targetCount) : count > 0 ? 1 : 0;
+      const targetCount = normalizedDensityTarget(signal.targetCount, documentDensityContext.factor);
+      const density = Math.min(1, count / targetCount);
       earned += weight * density;
       possible += weight;
     }
@@ -2064,9 +2521,26 @@ export async function analyzePayload(payload: AnalyzeRequest) {
       competitorsAnalyzed: competitorCount,
       engine: snapshot.search.engine ?? "yandex", region: snapshot.search.region ?? "", device: snapshot.search.device ?? "desktop",
       language, languageLabel: LANGUAGE_CONFIGS[language]?.label ?? language,
+      morphologyMode: LANGUAGE_CONFIGS[language]?.morphology ?? "tokens",
+      morphologyLabel: LANGUAGE_CONFIGS[language]?.morphology === "lemmatization"
+        ? "Словарная лемматизация Az.Morph"
+        : LANGUAGE_CONFIGS[language]?.morphology === "stemming"
+          ? "Стемминг Snowball"
+          : "Токенизация без склейки словоформ",
+      builtInStopwords: Boolean(LANGUAGE_CONFIGS[language]?.stopwords),
       confidence: competitorCount >= 6 ? "high" : competitorCount >= 3 ? "medium" : "low",
-      tripletsEnabled: payload.tripletsEnabled === true,
-      phraseSimilarityMethod: "Локальное семантическое сходство фразы с входными ключами", snapshotId: snapshot.id,
+      phraseSimilarityMethod: ngramSemanticResolution.source === "e5-service"
+        ? "Multilingual E5"
+        : ngramSemanticResolution.source === "e5-cache"
+          ? "Multilingual E5 — кэш snapshot"
+          : "Локальный резервный алгоритм",
+      phraseSimilarityEngine: ngramSemanticResolution.source === "local" ? "local" : "e5",
+      phraseSimilarityModel: ngramSemanticResolution.model,
+      phraseSimilarityRevision: ngramSemanticResolution.revision,
+      phraseSimilarityCached: ngramSemanticResolution.source === "e5-cache",
+      phraseSimilarityCoverage: round(ngramSemanticResolution.coverage * 100, 1),
+      phraseSimilarityError: ngramSemanticResolution.error,
+      snapshotId: snapshot.id,
       stopWords: stops.stopWords, stopPhrases: stops.stopPhrases,
     },
     summary: {
@@ -2094,8 +2568,8 @@ export async function analyzePayload(payload: AnalyzeRequest) {
       keyTfidfRaw: "Сырой ключевой TF-IDF отражает присутствие уникальных лемм входных ключей с учётом их повторяемости в наборе запросов; пользовательские стоп-леммы исключаются.",
       keyTfidfScore: "Итоговый балл ключевого TF-IDF показывает положение страницы относительно устойчивого конкурентного ориентира.",
       weightedCoverage: "Взвешенный охват показывает, какая доля важных лемм и фраз присутствует на странице; повторные вхождения не увеличивают охват.",
-      weightedDensity: "Взвешенное выполнение ориентиров показывает, насколько фактические количества важных лемм и фраз достигают конкурентных медиан. Ориентиры округляются вверх, превышение цели не даёт дополнительного балла, а нулевой ориентир оценивается по факту наличия вхождения.",
-      phraseSimilarity: "Сходство с ключом участвует в оценке важности N-грамм и помогает находить близкие фразы; в метрики документов оно не входит.",
+      weightedDensity: "Взвешенное выполнение ориентиров показывает, насколько фактические количества важных лемм и фраз достигают конкурентных медиан, нормированных под объём каждого документа. Ориентиры округляются вверх и не бывают меньше одного; превышение цели не даёт дополнительного балла.",
+      phraseSimilarity: "Сходство N-грамм с ключами рассчитывается Multilingual E5, когда локальный сервис подключён; при его отсутствии применяется детерминированный резервный алгоритм. Сигнал участвует только в важности N-грамм и не входит в метрики документов.",
     },
   };
 }

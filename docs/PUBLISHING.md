@@ -74,5 +74,5 @@ git push origin v0.1.0
 gh release create v0.1.0 --title "BAR 0.1.0" --notes-file CHANGELOG.md
 ```
 
-Не прикладывайте локальный `dist` или модели spaCy к Release без отдельной
+Не прикладывайте локальный `dist` или веса E5 к Release без отдельной
 воспроизводимой сборки, проверки секретов и инвентаризации лицензий.

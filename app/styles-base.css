@@ -68,6 +68,7 @@ h1 { font-size: clamp(38px, 5vw, 66px); line-height: .98; letter-spacing: -.055e
 .volume-metric-card { border: 1px solid var(--line); border-radius: 14px; background: #fff; }
 .metrics-summary article > span { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .08em; }
 .metrics-summary article > strong { font-size: 30px; letter-spacing: -.04em; }
+.metrics-summary article > strong small { color: var(--muted); font-size: 12px; font-weight: 750; letter-spacing: -.01em; white-space: nowrap; }
 .metrics-summary article > em { color: var(--muted); font-size: 11px; font-style: normal; }
 .metrics-grid .good { color: #467a24; }
 .priority-card { background: var(--purple); color: #fff; border: 1px solid var(--ink); border-radius: 14px; padding: 22px 24px; display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 20px; box-shadow: 5px 5px 0 var(--ink); margin-bottom: 72px; }
